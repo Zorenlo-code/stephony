@@ -11,21 +11,29 @@
   function u32(n) { return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]; }
   function u16(n) { return [(n >> 8) & 255, n & 255]; }
 
-  // timeline issue de StephonySynth.buildTimeline
-  function toSMF(timeline, { tempo = 100, program = 0, title = 'Stephony', timeSig = null, key = 0 } = {}) {
+  // timeline issue de StephonySynth.buildTimeline ; tempo = noires par minute
+  function toSMF(timeline, { tempo = 100, program = 0, title = 'Stephony', timeSig = null, key = 0, keyChanges = [] } = {}) {
     const ev = []; // {tick, order, bytes}
-    const usPerQ = Math.round(60000000 / tempo);
+    const tempoEv = (tick, bpm) => { const us = Math.round(60000000 / bpm); ev.push({ tick, o: 0, b: [0xff, 0x51, 0x03, (us >> 16) & 255, (us >> 8) & 255, us & 255] }); };
     ev.push({ tick: 0, o: 0, b: [0xff, 0x03, ...vlq(str(title).length), ...str(title)] });
-    ev.push({ tick: 0, o: 0, b: [0xff, 0x51, 0x03, (usPerQ >> 16) & 255, (usPerQ >> 8) & 255, usPerQ & 255] });
     if (timeSig) ev.push({ tick: 0, o: 0, b: [0xff, 0x58, 0x04, timeSig[0], Math.round(Math.log2(timeSig[1])), 24, 8] });
     ev.push({ tick: 0, o: 0, b: [0xff, 0x59, 0x02, (key + 256) & 255, 0] });
+    for (const k of keyChanges) ev.push({ tick: Math.round(k.q * PPQ), o: 0, b: [0xff, 0x59, 0x02, (k.fifths + 256) & 255, 0] });
     ev.push({ tick: 0, o: 1, b: [0xc0, program & 127] });
+    // carte de tempo : ritardandos et points d'orgue
+    let lastBpm = null;
+    for (const it of timeline.items) {
+      const bpm = Math.round(tempo * (it.tf || 1) * 100) / 100;
+      if (bpm !== lastBpm) { tempoEv(Math.round((it.q0 != null ? it.q0 : it.start) * PPQ), bpm); lastBpm = bpm; }
+    }
+    if (lastBpm === null) tempoEv(0, tempo);
     for (const it of timeline.items) {
       if (it.rest || it.tied) continue;
-      const a = Math.round(it.start * PPQ), b = Math.round((it.start + it.dur) * PPQ) - 1;
+      const q0 = it.q0 != null ? it.q0 : it.start, qd = it.qd != null ? it.qd : it.dur;
+      const a = Math.round(q0 * PPQ), b = Math.round((q0 + qd * (it.gate || 0.95)) * PPQ) - 1;
       it.midis.forEach((m) => {
         if (m < 0 || m > 127) return;
-        ev.push({ tick: a, o: 3, b: [0x90, m, 96] });
+        ev.push({ tick: a, o: 3, b: [0x90, m, Math.max(1, Math.min(127, it.vel || 96))] });
         ev.push({ tick: Math.max(a + 1, b), o: 2, b: [0x80, m, 0] });
       });
     }

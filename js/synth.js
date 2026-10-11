@@ -210,34 +210,44 @@
   };
 
   // ------------------------------------------------------- lecteur
-  // timeline : [{i, start (noires), dur (noires), midis[], rest}]
-  // timeline dans l'ordre de jeu (reprises et 1re/2e fins déroulées, triolets à 2/3)
-  function buildTimeline(events, transpose = 0, expand = true) {
+  // timeline : [{i, q0, qd (noires écrites), start, dur (noires « jouées », tempo local et points d'orgue inclus), midis[], vel, gate, rest}]
+  // dans l'ordre de jeu (reprises et 1re/2e fins déroulées, triolets à 2/3)
+  function buildTimeline(events, transpose = 0, expand = true, opts = {}) {
     const order = expand && root.OMR && root.OMR.expandRepeats ? root.OMR.expandRepeats(events) : events.map((e, i) => i).filter((i) => events[i].type === 'note' || events[i].type === 'rest');
-    const tl = []; let t = 0; let last = null;
+    const perf = root.StephonyExpr ? root.StephonyExpr.perform(events, order, opts) : new Map();
+    const tl = []; let q = 0, t = 0; let last = null;
+    const beats = []; let nextBeat = 0;
+    const barQ = opts.barQ || 4, beatQ = opts.beatQ || 1;
     for (const i of order) {
       const e = events[i];
       if (e.type !== 'note' && e.type !== 'rest') continue;
       const d = (typeof e.dur === 'number' ? e.dur : 1) * (e.tup || 1);
-      if (e.type === 'rest') { tl.push({ i, start: t, dur: d, midis: [], rest: true }); last = null; }
+      const p = perf.get(i) || { vel: 96, gate: 0.92, tf: 1, stretch: 1 };
+      const de = d * p.stretch / p.tf; // durée effective (noires au tempo de base)
+      // pulsations du métronome dans cette note
+      while (nextBeat < q + d - 1e-6) { beats.push({ at: t + (nextBeat - q) * de / d, strong: Math.abs(nextBeat / barQ - Math.round(nextBeat / barQ)) < 1e-6 }); nextBeat += beatQ; }
+      if (e.type === 'rest') { tl.push({ i, q0: q, qd: d, start: t, dur: de, midis: [], rest: true, tf: p.tf / p.stretch }); last = null; }
       else {
-        const midis = e.pitches.map((p) => (p.manual != null ? p.manual : p.midi) + transpose);
-        if (e.tie && last && last.midis.join() === midis.join()) { last.dur += d; tl.push({ i, start: t, dur: d, midis, tied: true }); }
-        else { last = { i, start: t, dur: d, midis }; tl.push(last); }
+        const midis = e.pitches.map((pp) => (pp.manual != null ? pp.manual : pp.midi) + transpose);
+        if (e.tie && last && last.midis.join() === midis.join()) { last.dur += de; last.gate = p.gate; last.qd += d; tl.push({ i, q0: q, qd: d, start: t, dur: de, midis, tied: true, tf: p.tf / p.stretch }); }
+        else { last = { i, q0: q, qd: d, start: t, dur: de, midis, vel: p.vel, gate: p.gate, tf: p.tf / p.stretch }; tl.push(last); }
       }
-      t += d;
+      q += d; t += de;
     }
-    return { items: tl, total: t };
+    return { items: tl, total: t, totalQ: q, beats };
   }
+  // vélocité MIDI -> gain du synthétiseur (courbe perceptive)
+  const velGain = (v) => Math.min(1.05, Math.pow((v || 96) / 100, 1.5));
 
   class Player {
     constructor() { this.playing = false; this.timer = null; this.onPos = null; this.onEnd = null; this.loop = false; this.metronome = false; this.beatsPerBar = 4; this.useSynth = true; }
     load(events, opts) {
       this.stop();
       this.events = events; this.opts = opts;
-      this.tl = buildTimeline(events, opts.transpose || 0, opts.repeats !== false);
+      this.tl = buildTimeline(events, opts.transpose || 0, opts.repeats !== false, opts);
     }
-    get spq() { return 60 / (this.opts.tempo || 100); }
+    // secondes par noire : le tempo est exprimé dans l'unité de temps (noire pointée en 6/8…)
+    get spq() { return 60 / ((this.opts.tempo || 100) * (this.opts.beatQ || 1)); }
     play(fromIndex = 0) {
       audio();
       if (!this.tl || !this.tl.items.length) return;
@@ -246,7 +256,7 @@
       this.offsetQ = startItem.start;
       this.t0 = ctx.currentTime + 0.12;
       this.next = this.tl.items.indexOf(startItem);
-      this.nextBeat = Math.ceil(this.offsetQ - 1e-6);
+      this.nextBeat = this.tl.beats.findIndex((b) => b.at >= this.offsetQ - 1e-6); if (this.nextBeat < 0) this.nextBeat = this.tl.beats.length;
       this.playing = true;
       if (Midi.output) Midi.send([0xC0, INSTRUMENTS[this.opts.instrument] ? INSTRUMENTS[this.opts.instrument].gm : 0]);
       this.timer = setInterval(() => this.tick(), 25);
@@ -268,10 +278,11 @@
       const spq = this.spq, horizon = ctx.currentTime + 0.25;
       const items = this.tl.items;
       if (this.metronome) {
-        while (true) {
-          const tb = this.t0 + (this.nextBeat - this.offsetQ) * spq;
-          if (tb > horizon || this.nextBeat > this.tl.total) break;
-          if (tb >= ctx.currentTime - 0.01) click(tb, this.nextBeat % this.beatsPerBar === 0);
+        while (this.nextBeat < this.tl.beats.length) {
+          const b = this.tl.beats[this.nextBeat];
+          const tb = this.t0 + (b.at - this.offsetQ) * spq;
+          if (tb > horizon) break;
+          if (tb >= ctx.currentTime - 0.01) click(tb, b.strong);
           this.nextBeat++;
         }
       }
@@ -280,10 +291,10 @@
         const when = this.t0 + (it.start - this.offsetQ) * spq;
         if (when > horizon) break;
         if (!it.rest && !it.tied) {
-          const dur = it.dur * spq * 0.96;
+          const dur = Math.max(0.04, it.dur * spq * (it.gate || 0.92) - (it.gate >= 1 ? 0 : 0.01));
           it.midis.forEach((m) => {
-            if (this.useSynth) playNote(this.opts.instrument || 'piano', m, when, dur, 0.85);
-            if (Midi.output) { Midi.send([0x90, m, 100], when); Midi.send([0x80, m, 0], when + dur); }
+            if (this.useSynth) playNote(this.opts.instrument || 'piano', m, when, dur, velGain(it.vel));
+            if (Midi.output) { Midi.send([0x90, m, it.vel || 96], when); Midi.send([0x80, m, 0], when + dur); }
           });
         }
         this.next++;

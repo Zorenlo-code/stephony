@@ -1,8 +1,11 @@
 /* Stephony — service worker : tout est mis en cache pour fonctionner hors-ligne */
-const VERSION = 'stephony-v1.1.0';
+const VERSION = 'stephony-v1.2.0';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
-  'js/app.js', 'js/omr.js', 'js/omr-worker.js', 'js/symbols-model.js', 'js/synth.js', 'js/midi.js',
+  'js/app.js', 'js/omr.js', 'js/omr-worker.js', 'js/symbols-model.js', 'js/synth.js', 'js/midi.js', 'js/expr.js', 'js/ocr.js',
+  // lecture du texte (titre, tempo, indications) hors-ligne
+  'vendor/tesseract/tesseract.min.js', 'vendor/tesseract/worker.min.js', 'vendor/tesseract/tesseract-core-simd-lstm.wasm.js',
+  'vendor/tesseract/lang/fra.traineddata.gz',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-192.png', 'icons/maskable-512.png',
   'icons/apple-touch-icon.png', 'icons/favicon-64.png', 'assets/demo.jpg', 'assets/demo2.jpg',
 ];

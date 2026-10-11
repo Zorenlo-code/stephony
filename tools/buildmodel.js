@@ -1,7 +1,7 @@
 const fs = require('fs'), path = require('path');
 const OMR = require('../js/omr.js');
-const samples = ['samples.json', 'samples_rep.json'].filter((f) => fs.existsSync(path.join(__dirname, f))).flatMap((f) => JSON.parse(fs.readFileSync(path.join(__dirname, f))));
-const CAP = { other: 900 }, DEF = 260;
+const samples = ['samples.json', 'samples_rep.json', 'samples_expr.json', 'samples_digits.json'].filter((f) => fs.existsSync(path.join(__dirname, f))).flatMap((f) => JSON.parse(fs.readFileSync(path.join(__dirname, f))));
+const CAP = { other: 1300, text: 600, curve: 300, hairpin: 200 }, DEF = 260;
 let seed = 42; const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
 samples.forEach((x) => (x.r = rnd()));
 const test = samples.filter((x) => x.r < 0.2), train = samples.filter((x) => x.r >= 0.2);

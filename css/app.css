@@ -237,3 +237,64 @@ option { background: #1b1538; color: var(--text); }
 #edStructRow .ed-btn, #edMarkRow .ed-btn { font-size: 12.5px; }
 .demos { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -2px 2px 12px; color: var(--muted); font-size: 13.5px; }
 .demo-chip { border: 1px solid rgba(217, 70, 239, .35); background: var(--grad-soft); color: #f5e8ff; border-radius: 999px; padding: 6px 12px; font-size: 13.5px; font-weight: 600; }
+
+/* ---------- v1.2 : éditeur à onglets, ajout, renommage, signes d'expression ---------- */
+.ed-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 3px; border-radius: 13px; background: rgba(255, 255, 255, .05); border: 1px solid var(--line); margin-bottom: 4px; }
+.ed-tabs button { border: 0; background: transparent; border-radius: 10px; padding: 7px 4px; font-size: 13.5px; font-weight: 650; color: var(--muted); }
+.ed-tabs button.on { background: var(--grad-soft); color: #fff; box-shadow: inset 0 0 0 1px rgba(217, 70, 239, .35); }
+.ed-label { font-size: 11.5px; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); margin: 8px 2px -2px; }
+.ed-row.dyns .ed-btn { font-family: Georgia, "Times New Roman", serif; font-style: italic; font-weight: 800; font-size: 17px; }
+#edArtRow .ed-btn, #edPhrRow .ed-btn, #edStruct2Row .ed-btn { font-size: 12px; flex-direction: column; gap: 0; line-height: 1.1; }
+.art-g { font-size: 17px; line-height: 1; font-weight: 800; color: #f0abfc; }
+.ed-btn.on .art-g { color: #fff; }
+.key-row { grid-template-columns: 2fr 1fr 1fr; }
+.key-row select { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 9px 8px; min-height: 42px; }
+.add-btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px 6px 8px; font-size: 13.5px; }
+.add-btn .ico { width: 18px; height: 18px; }
+.add-btn.on { background: var(--grad); border-color: transparent; color: #fff; }
+.add-bar { margin: 6px 10px 0; padding: 10px 12px; border-radius: 16px; background: rgba(28, 22, 58, .95); border: 1px solid rgba(245, 158, 11, .45); box-shadow: 0 0 0 1px rgba(245, 158, 11, .15), 0 10px 30px rgba(0, 0, 0, .35); }
+.add-top { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #fde68a; }
+.add-top b { color: #fff; }
+.add-top .icon-btn { margin-left: auto; }
+.add-kinds { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.add-kinds button, .sugg button, .add-opts button { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 12px; font-size: 13.5px; font-weight: 600; }
+.add-kinds button.on, .add-opts button.on { background: var(--grad); border-color: transparent; color: #fff; }
+.add-opts { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+.add-opts:empty { display: none; }
+.add-opts select { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 7px 8px; }
+.add-opts svg { width: 14px; height: 20px; }
+.viewer.adding { box-shadow: inset 0 0 0 2px rgba(245, 158, 11, .7); cursor: crosshair; }
+.overlay .ghost { fill: rgba(245, 158, 11, .25); stroke: #f59e0b; stroke-width: 2px; vector-effect: non-scaling-stroke; pointer-events: none; }
+.overlay .ev.key { fill: rgba(52, 211, 153, .12); stroke: rgba(16, 185, 129, .9); stroke-width: 2px; }
+.overlay .dynlbl { font: italic 800 16px Georgia, "Times New Roman", serif; fill: #a21caf; paint-order: stroke; stroke: #fff; stroke-width: 3px; pointer-events: none; }
+.chip .dyn { font-family: Georgia, "Times New Roman", serif; font-style: italic; font-weight: 800; color: #f0abfc; margin-right: 2px; }
+.chip .art { color: #fcd34d; font-weight: 800; margin-left: 2px; letter-spacing: 1px; }
+.chip .txt { font-style: italic; font-weight: 500; color: #c4b5fd; margin-right: 3px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.chip.leg { box-shadow: inset 0 -2px 0 rgba(251, 191, 36, .75); }
+.chip.key { color: #a7f3d0; border-color: rgba(52, 211, 153, .45); background: rgba(52, 211, 153, .1); }
+.field label small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+.read-info { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: rgba(255, 255, 255, .04); border: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.read-info b { color: var(--text); font-weight: 600; }
+.small-sheet { max-width: 560px; margin: 0 auto; }
+.text-field { width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; font-size: 16px; }
+.text-field:focus { outline: none; border-color: rgba(217, 70, 239, .6); }
+.sheet-actions.two { grid-template-columns: 1fr 1fr; }
+.hint { color: var(--muted); font-size: 13px; margin-top: 8px; min-height: 1em; }
+.sugg { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.sugg button { font-style: italic; }
+.text-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.text-list:empty { display: none; }
+.text-list span { display: inline-flex; align-items: center; gap: 6px; padding: 5px 6px 5px 12px; border-radius: 999px; background: var(--grad-soft); border: 1px solid rgba(217, 70, 239, .3); font-style: italic; font-size: 14px; }
+.text-list button { width: 24px; height: 24px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, .12); font-size: 14px; line-height: 1; }
+.lib-item { cursor: pointer; }
+.lib-more { position: absolute; top: 6px; right: 6px; width: 34px; height: 34px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, .25); background: rgba(13, 10, 31, .72); color: #fff; font-size: 18px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.lib-item .lib-text { position: absolute; left: 8px; bottom: 58px; max-width: calc(100% - 16px); }
+.info-row .pill { min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.info-row #infoKey { flex-shrink: 0.4; }
+.info-row .add-btn, .info-row .icon-btn { flex: none; }
+.beat-ico { display: inline-flex; vertical-align: -5px; width: 15px; height: 20px; margin-left: 2px; }
+.beat-ico svg { width: 100%; height: 100%; }
+.ed-row.dyns { grid-template-columns: repeat(8, 1fr); gap: 4px; }
+.ed-row.dyns .ed-btn { min-height: 36px; font-size: 15px; padding: 2px; }
+.ed-pane[data-pane="jeu"] .ed-btn { min-height: 38px; }
+@media (max-height: 720px) { .ed-label { display: none; } .ed-pane[data-pane="jeu"] .ed-row { margin-top: 5px; } }

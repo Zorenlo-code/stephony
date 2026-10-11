@@ -590,7 +590,7 @@
   }
 
   // Remplissage des trous de taille "tête de note"
-  function fillNoteHoles(src, w, h, s, target, strict) {
+  function fillNoteHoles(src, w, h, s, target, strict, nsLabels) {
     const inv = new Uint8Array(w * h);
     for (let i = 0; i < w * h; i++) inv[i] = src[i] ? 0 : 1;
     const { labels, comps } = labelComponents(inv, w, h, false, 1);
@@ -612,6 +612,7 @@
           }
         }
         if (!bnd) continue;
+        // trou entre deux symboles distincts (altération collée à une tête, etc.) : pas une tête creuse
         if (lineB / bnd > 0.3) {
           // tête creuse dont le haut/bas coïncide avec les lignes : parois latérales épaisses et courbes
           if (c.w < 0.35 * s || c.w > 1.0 * s || c.h < 0.5 * s) continue;
@@ -682,7 +683,8 @@
     }
     let best = 'other', bv = -1, tot = 0;
     for (const c in votes) { tot += votes[c]; if (votes[c] > bv) { bv = votes[c]; best = c; } }
-    return { cls: best, conf: bv / tot, dist: Math.sqrt(dists[0][0]) };
+    for (const c in votes) votes[c] /= tot;
+    return { cls: best, conf: bv / tot, dist: Math.sqrt(dists[0][0]), votes };
   }
 
   // -------------------------------------------------------------- musique
@@ -766,13 +768,24 @@
     progress(0.55, 'Têtes de notes');
     const filled = ns.slice();
     fillNoteHoles(ns, w, h, s, filled);
-    if (!opts.noBinHoles) fillNoteHoles(bin, w, h, s, filled, ns);
+    if (!opts.noBinHoles) fillNoteHoles(bin, w, h, s, filled, ns, labels);
     const dt = distanceTransform(filled, w, h);
     const coreThr = 0.34 * s;
     const core = new Uint8Array(w * h);
     for (let i = 0; i < w * h; i++) if (dt[i] >= coreThr) core[i] = 1;
     const cores = labelComponents(core, w, h, true, 1).comps;
     let heads = [];
+    // noyaux trop grands (tête soudée à une altération, trous comblés entre symboles) : seuil local plus élevé
+    for (let ci = 0; ci < cores.length; ci++) {
+      const c = cores[ci];
+      if (c.sub || !(c.w > 1.6 * s || c.h > 1.2 * s) || c.w > 6 * s || c.h > 4 * s) continue;
+      for (const thr of [0.42 * s, 0.5 * s]) {
+        const bw = c.w, bh = c.h, sub = new Uint8Array(bw * bh);
+        for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { const i = (c.y0 + y) * w + c.x0 + x; if (dt[i] >= thr) sub[y * bw + x] = 1; }
+        const sc = labelComponents(sub, bw, bh, true, 1).comps.filter((q) => q.w <= 2.2 * s && q.h <= 1.2 * s);
+        if (sc.length) { sc.forEach((q) => cores.push({ x0: q.x0 + c.x0, y0: q.y0 + c.y0, x1: q.x1 + c.x0, y1: q.y1 + c.y0, w: q.w, h: q.h, cx: q.cx + c.x0, cy: q.cy + c.y0, sub: true })); break; }
+      }
+    }
     for (const c of cores) {
       if (c.w > 2.2 * s || c.h > 1.2 * s) continue;
       let cx = c.cx, cy = c.cy;
@@ -781,16 +794,22 @@
       const sp = staffSp(st, cx);
       if (cx < st.x0 - s || cx > st.x1 + s) continue;
       if (cy < lineAt(st, 0, cx) - 5.5 * sp || cy > lineAt(st, 4, cx) + 5.5 * sp) continue;
-      // au-delà de la portée, une vraie note s'appuie sur des lignes supplémentaires
+      // au-delà de la portée, une vraie note s'appuie sur TOUTES les lignes supplémentaires intermédiaires
       const above = cy < lineAt(st, 0, cx) - 1.2 * sp, below = cy > lineAt(st, 4, cx) + 1.2 * sp;
       if (above || below) {
-        const ly0 = above ? lineAt(st, 0, cx) - sp : lineAt(st, 4, cx) + sp;
-        let hits = 0, tot = 0;
-        for (let x = Math.round(cx - 0.9 * s); x <= Math.round(cx + 0.9 * s); x++) {
-          tot++;
-          for (let y = Math.round(ly0 - t - 1); y <= Math.round(ly0 + t + 1); y++) if (y >= 0 && y < h && x >= 0 && x < w && bin[y * w + x]) { hits++; break; }
+        const dist = above ? lineAt(st, 0, cx) - cy : cy - lineAt(st, 4, cx);
+        const K = Math.max(1, Math.floor(dist / sp + 0.25));
+        let okL = true;
+        for (let kk = 1; kk <= K && okL; kk++) {
+          const ly0 = above ? lineAt(st, 0, cx) - kk * sp : lineAt(st, 4, cx) + kk * sp;
+          let hits = 0, tot = 0; const tol = t + 1 + (kk > 1 ? 1 : 0);
+          for (let x = Math.round(cx - 0.9 * s); x <= Math.round(cx + 0.9 * s); x++) {
+            tot++;
+            for (let y = Math.round(ly0 - tol); y <= Math.round(ly0 + tol); y++) if (y >= 0 && y < h && x >= 0 && x < w && bin[y * w + x]) { hits++; break; }
+          }
+          if (hits < 0.75 * tot) okL = false;
         }
-        if (hits < 0.75 * tot) continue;
+        if (!okL) continue;
       }
       // étendue de la tête dans l'image remplie
       const row = Math.round(cy) * w;
@@ -800,10 +819,12 @@
       let yt = Math.round(cy), yb = Math.round(cy);
       while (yt > 0 && filled[(yt - 1) * w + Math.round(cx)] && cy - yt < 1.2 * s) yt--;
       while (yb < h - 1 && filled[(yb + 1) * w + Math.round(cx)] && yb - cy < 1.2 * s) yb++;
-      const hw = (xr - xl + 1), hh = (yb - yt + 1);
-      if ((cx - xl >= 1.4 * s - 1 && xr - cx >= 1.4 * s - 1) || hw > 2.15 * s || hh < 0.75 * s || hh > 1.6 * s) continue;
+      let hw = (xr - xl + 1); const hh = (yb - yt + 1);
+      if (hw > 1.75 * s && c.sub) { xl = Math.max(xl, Math.round(c.cx - 0.68 * s)); xr = Math.min(xr, Math.round(c.cx + 0.68 * s)); hw = xr - xl + 1; }
+      if ((cx - xl >= 1.4 * s - 1 && xr - cx >= 1.4 * s - 1) || hw > 2.15 * s || hw < 0.8 * s || hh < 0.75 * s || hh > 1.6 * s) continue;
       let maxd = 0; for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (dt[y * w + x] > maxd) maxd = dt[y * w + x];
-      heads.push({ cx: (xl + xr) / 2, cy: (yt + yb) / 2 * 0.5 + cy * 0.5, wpx: hw, hpx: hh, r: maxd, st: staves.indexOf(st), comp: majorityLabel(labels, w, h, cx, cy, 0.7 * s) });
+      if (maxd < 0.37 * s && c.w * c.h < 4) continue; // noyau ponctuel : coin comblé entre ligature et ligne
+      heads.push({ cx: (xl + xr) / 2, cy: (yt + yb) / 2 * 0.5 + cy * 0.5, wpx: hw, hpx: hh, r: maxd, st: staves.indexOf(st), comp: majorityLabel(labels, w, h, cx, cy, 0.7 * s), sub: !!c.sub });
     }
     // fusion des doublons
     heads.sort((a, b) => a.cx - b.cx);
@@ -820,13 +841,21 @@
       if (C.w > 8 * s || C.h > 9 * s) { C.cls = 'other'; continue; }
       C.feat = componentFeatures(ns, w, labels, C, s);
       const r = knnClassify(C.feat, model);
-      C.cls = r.cls; C.conf = r.conf; C.kdist = r.dist;
+      C.cls = r.cls; C.conf = r.conf; C.kdist = r.dist; C.votes = r.votes;
     }
     // fusion de fragments (symbole coupé par la suppression des lignes)
     if (model) mergeFragments(comps, labels, ns, w, h, s, t, model);
-    // une tête dans un symbole reconnu (clé, chiffre, altération, silence) est un faux positif
-    const NONHEAD = /^(clef|t\d|time|sharp|flat|natural|dsharp|dflat|rest)/;
-    heads = heads.filter((hd) => { const C = comps[hd.comp - 1]; return !(C && NONHEAD.test(C.cls) && C.conf >= 0.6); });
+    // ---- lignes de texte (titre, tempo, indications, paroles) : jamais des notes
+    const { textComps, textLines } = findTextLines(comps, staves, s, new Set(heads.map((hd) => hd.comp)));
+    // une tête dans un symbole reconnu (clé, chiffre, altération, silence, nuance, texte) est un faux positif
+    const NONHEAD = /^(clef|t\d|time|sharp|flat|natural|dsharp|dflat|rest)/, NONHEAD2 = /^(dyn_|accent|marcato|fermata|breath)/;
+    heads = heads.filter((hd) => {
+      const C = comps[hd.comp - 1];
+      if (C && NONHEAD.test(C.cls) && C.conf >= 0.6) return false;
+      if (C && NONHEAD2.test(C.cls) && C.conf >= 0.85) return false;
+      if (C && textComps.has(C.id)) return false;
+      return !textLines.some((L) => hd.cx > L.x0 - 0.2 * s && hd.cx < L.x1 + 0.2 * s && hd.cy > L.y0 - 0.1 * s && hd.cy < L.y1 + 0.1 * s);
+    });
     const headComp = new Set(heads.map((hd) => hd.comp));
     for (const C of comps) C.isHead = headComp.has(C.id);
     // ---- en-têtes (clé, armure, chiffrage) par portée
@@ -866,7 +895,29 @@
       // chiffrage de mesure
       let time = null; const timeComps = [];
       const ts = after.filter((C) => C.x0 >= x - 0.2 * sp && C.x0 < x + 3 * sp && /^(t\d|timeC|timeCut)$/.test(C.cls));
-      if (ts.length) {
+      if (model && !ts.some((C) => C.cls === 'timeC' || C.cls === 'timeCut')) {
+        // chiffres collés (6 sur 8 soudés après effacement des lignes) : découpe à la ligne du milieu
+        const region = after.filter((C) => C.x0 >= x - 0.2 * sp && C.x0 < x + 3 * sp && C.h >= 0.8 * sp && C.w >= 0.2 * sp && C.w <= 2.6 * sp && !/^(sharp|flat|natural)$/.test(C.cls));
+        const parts = [];
+        for (const C of region) {
+          const ym = lineAt(st, 2, C.cx);
+          const halves = (C.y0 < ym - 0.5 * sp && C.y1 > ym + 0.5 * sp) ? [[C.y0, Math.floor(ym)], [Math.ceil(ym), C.y1]] : [[C.y0, C.y1]];
+          for (const [ya, yb] of halves) {
+            const pred = (xx, yy) => yy >= ya && yy <= yb && labels[yy * w + xx] === C.id;
+            let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, area = 0;
+            for (let yy = ya; yy <= yb; yy++) for (let xx = C.x0; xx <= C.x1; xx++) if (pred(xx, yy)) { area++; if (xx < x0) x0 = xx; if (xx > x1) x1 = xx; if (yy < y0) y0 = yy; if (yy > y1) y1 = yy; }
+            if (area < 0.15 * sp * sp || y1 - y0 < 0.6 * sp) continue;
+            const r = knnClassify(featuresPred(x0, y0, x1, y1, pred, area, s), model);
+            if (/^t\d$/.test(r.cls) && r.conf >= 0.5) parts.push({ cls: r.cls, rel: ((y0 + y1) / 2 - ym) / sp, x0, x1, C });
+          }
+        }
+        const top = parts.filter((p) => p.rel < 0).sort((a, b) => a.x0 - b.x0), bot = parts.filter((p) => p.rel >= 0).sort((a, b) => a.x0 - b.x0);
+        if (top.length && bot.length) {
+          const num = parseInt(top.map((p) => p.cls.slice(1)).join(''), 10), den = parseInt(bot.map((p) => p.cls.slice(1)).join(''), 10);
+          if (num > 0 && num <= 16 && [2, 4, 8, 16].includes(den)) { time = [num, den]; parts.forEach((p) => { if (!timeComps.includes(p.C)) timeComps.push(p.C); }); }
+        }
+      }
+      if (!time && ts.length) {
         const c0 = ts.find((C) => C.cls === 'timeC' || C.cls === 'timeCut');
         if (c0) { time = c0.cls === 'timeC' ? [4, 4] : [2, 2]; timeComps.push(c0); }
         else {
@@ -961,6 +1012,8 @@
         if (hd.stem.width > 0.6 * s) hd.stem = null;
       }
     }
+    // une tête issue d'un noyau découpé doit être pleine (sinon : interstice entre ligatures, entre symboles)
+    heads = heads.filter((hd) => !(hd.sub && hd.hollow));
     // fausses têtes au bout d'une hampe (crochets épais) : on les retire
     {
       const drop = new Set();
@@ -979,7 +1032,8 @@
     }
     // les chiffres de triolets près des ligatures ne doivent pas compter comme ligatures
     const skipComp = new Uint8Array(comps.length + 1);
-    for (const C of comps) if (C.cls === 'tuplet3' && C.conf >= 0.6) skipComp[C.id] = 1;
+    const tupScore = (v) => v ? (v.tuplet3 || 0) + (v.t3 || 0) : 0;
+    for (const C of comps) if (tupScore(C.votes) >= 0.6) skipComp[C.id] = 1;
     // chiffre « 3 » collé à la ligature : on l'isole au-dessus (ou en dessous) de la ligne des pointes de hampes
     const mergedTup = [];
     const digitMask = new Uint8Array(w * h);
@@ -1010,7 +1064,7 @@
           if (bh < 0.6 * s || bh > 2.0 * s || bw < 0.4 * s || bw > 1.6 * s) continue;
           const f = featuresPred(x0, y0, x1, y1, inDigit, area, s);
           const r = knnClassify(f, model);
-          if (r.cls === 'tuplet3' && r.conf >= 0.6) {
+          if (tupScore(r.votes) >= 0.6) {
             const st = staves[A.st];
             mergedTup.push({ staff: A.st, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 });
             for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (inDigit(x, y)) digitMask[y * w + x] = 1;
@@ -1123,10 +1177,26 @@
       if (!nearBar) continue;
       voltas.push({ st: C.staff, x0: C.x0, x1: C.x1, comp: C });
     }
+    // points de staccato : à l'aplomb d'une tête, au-dessus ou en dessous
+    const staccDots = new Map();
+    for (const D of dots) {
+      if (repDots.has(D) || textComps.has(D.id) || (model && D.cls !== 'dot' && D.cls !== 'other')) continue;
+      // point du numéro de volte (« 1. ») : pas un staccato
+      if (voltas.some((v) => v.st === D.staff && D.cx >= v.comp.x0 - 0.3 * s && D.cx <= v.comp.x0 + 3.5 * s && D.cy >= v.comp.y0 - 0.5 * s && D.cy <= v.comp.y1 + 1.5 * s)) continue;
+      let best = null, bd = 1e9;
+      for (const hd of heads) {
+        if (hd.st !== D.staff) continue;
+        const dx = Math.abs(hd.cx - D.cx), dy = Math.abs(hd.cy - D.cy);
+        if (dx > 0.42 * s || dy < 0.6 * s || dy > 4.6 * s) continue;
+        if (hd.stem && Math.abs(hd.stem.x - D.cx) < 0.25 * s && (D.cy - hd.cy) * hd.stem.dir > 0 && Math.abs(D.cy - hd.cy) < Math.abs(hd.stem.tip - hd.cy)) continue;
+        if (dy < bd) { bd = dy; best = hd; }
+      }
+      if (best) staccDots.set(D, best);
+    }
     // points de prolongation
     for (const hd of heads) {
       const right = hd.cx + hd.wpx / 2;
-      hd.dotted = dots.some((C) => !repDots.has(C) && C.cx > right + 0.05 * s && C.cx < right + 1.4 * s && C.cy > hd.cy - 0.85 * s && C.cy < hd.cy + 0.35 * s && (C.cls === 'dot' || !model || C.cls === 'other' || C.cls === 'speck'));
+      hd.dotted = dots.some((C) => !repDots.has(C) && !staccDots.has(C) && !textComps.has(C.id) && C.cx > right + 0.05 * s && C.cx < right + 1.4 * s && C.cy > hd.cy - 0.85 * s && C.cy < hd.cy + 0.35 * s && (C.cls === 'dot' || !model || C.cls === 'other' || C.cls === 'speck'));
     }
     // durées
     for (const hd of heads) {
@@ -1137,14 +1207,48 @@
       hd.dur = d;
     }
     // ---- altérations accidentelles et silences
-    const accs = comps.filter((C) => ['sharp', 'flat', 'natural', 'dsharp', 'dflat'].includes(C.cls));
+    const accs = comps.filter((C) => ['sharp', 'flat', 'natural', 'dsharp', 'dflat'].includes(C.cls) && !textComps.has(C.id));
     const keyIds = new Set(staffInfo.flatMap((si) => si.keyComps.map((C) => C.id)));
+    // ---- changements d'armure après une barre (et armures de précaution en fin de portée)
+    const keyChanges = [];
+    staves.forEach((st, si) => {
+      const hdrEnd = staffInfo[si].headerEnd;
+      const myAcc = accs.filter((C) => C.staff === si && ['sharp', 'flat', 'natural'].includes(C.cls) && C.conf >= 0.6 && Math.abs(C.rel) < 3.2 && C.x0 > hdrEnd + 0.3 * s && !keyIds.has(C.id)).sort((a, b) => a.x0 - b.x0);
+      const myHeads = heads.filter((hd) => hd.st === si);
+      const barX = bars.filter((b) => b.st === si).map((b) => b.comp.x1);
+      const attached = (C) => myHeads.some((hd) => { const left = hd.cx - hd.wpx / 2; return (left - C.x1 > -0.3 * s || hd.cx < C.x1 + 0.1 * s) && left - C.x1 < 1.2 * s && hd.cx > C.x0 && hd.cy > C.y0 - 0.1 * s && hd.cy < C.y1 + 0.1 * s; });
+      const chains = [];
+      for (const C of myAcc) {
+        const L = chains[chains.length - 1];
+        const prev = L && L[L.length - 1];
+        if (prev && C.x0 - prev.x1 < 1.0 * st.sp && !myHeads.some((hd) => hd.cx > prev.x1 && hd.cx < C.x0)) L.push(C);
+        else chains.push([C]);
+      }
+      for (const G of chains) {
+        if (G.length >= 2 && attached(G[G.length - 1]) && G[G.length - 1].x0 - G[G.length - 2].x1 > 0.6 * st.sp) G.pop();
+        const afterBar = barX.some((x) => G[0].x0 - x > -0.2 * s && G[0].x0 - x < 1.8 * st.sp);
+        if (G.length === 1 && (!afterBar || attached(G[0]))) continue;
+        if (G.length >= 2 && G.some((C) => attached(C)) && !afterBar) continue;
+        // une armure alterne haut/bas : pas deux altérations à la même hauteur
+        if (G.length >= 2 && G.some((C, i) => i && Math.abs(C.cy - G[i - 1].cy) < 0.3 * st.sp)) continue;
+        const sh = G.filter((C) => C.cls === 'sharp').length, fl = G.filter((C) => C.cls === 'flat').length;
+        const fifths = sh > fl ? Math.min(7, sh) : -Math.min(7, fl);
+        const xe = G[G.length - 1].x1;
+        const courtesy = !myHeads.some((hd) => hd.cx > xe);
+        G.forEach((C) => keyIds.add(C.id));
+        const xb = Math.min(G[0].x0 - 0.05 * s, ...barX.filter((x) => x <= G[0].x0 + 0.2 * s && G[0].x0 - x < 1.8 * st.sp));
+        keyChanges.push({ st: si, x: xb, x1: xe, fifths, courtesy, box: [G[0].x0, Math.min(...G.map((C) => C.y0)), xe, Math.max(...G.map((C) => C.y1))] });
+      }
+    });
+    if (keyChanges.length) heads = heads.filter((hd) => !keyChanges.some((k) => k.st === hd.st && hd.cx > k.box[0] - 0.1 * s && hd.cx < k.box[2] + 0.1 * s));
     for (const hd of heads) {
       const sp = staffSp(staves[hd.st], hd.cx);
       const left = hd.cx - hd.wpx / 2;
       let best = null, bd = 1e9;
       for (const C of accs) {
         if (keyIds.has(C.id) || C.staff !== hd.st) continue;
+        // altération soudée à la tête
+        if (C.w > 1.9 * s && hd.cx > C.x0 + 0.6 * s && hd.cx < C.x1 + 0.1 * s && hd.cy > C.y0 && hd.cy < C.y1 && left - C.x0 > 0.5 * s) { best = C; bd = -1; break; }
         if (C.x1 > left + 0.25 * s || C.x1 < left - 1.6 * s) continue;
         const anchor = (C.cls === 'flat' || C.cls === 'dflat') ? C.y1 - 0.5 * sp : (C.y0 + C.y1) / 2;
         const dy = Math.abs(anchor - hd.cy);
@@ -1174,10 +1278,13 @@
     // ---- séquence d'événements
     progress(0.9, 'Assemblage');
     const events = [];
+    let carryKey = null; // armure en vigueur à la fin de la portée précédente
     staves.forEach((st, si) => {
       const info = staffInfo[si];
       const bottom = CLEF_BOTTOM[info.clef] || 30;
-      const fifths = info.fifths !== 0 ? info.fifths : globalKey;
+      // armure de début de portée : celle lue, sinon celle héritée (une armure manquée est plus probable qu'un retour silencieux à do)
+      let fifths = info.fifths !== 0 ? info.fifths : (carryKey != null ? carryKey : globalKey);
+      info.fifthsUsed = fifths;
       const myHeads = heads.filter((hd) => hd.st === si);
       const myBars = bars.filter((b) => b.st === si).map((b) => b.x).sort((a, b) => a - b)
         .filter((x, k, arr) => k === 0 || x - arr[k - 1] > 1.3 * st.sp); // double barre = une seule séparation
@@ -1190,12 +1297,20 @@
       const items = groups.map((G) => ({ kind: 'note', x: Math.min(...G.map((q) => q.cx)), heads: G }))
         .concat(rests.filter((r) => r.st === si).map((r) => ({ kind: 'rest', x: r.x, rest: r })))
         .concat(repeats.filter((r) => r.st === si).map((r) => ({ kind: 'repeat', x: r.x, rep: r })))
-        .concat(voltas.filter((v) => v.st === si).map((v) => ({ kind: 'volta', x: v.x0 + 0.3 * s, volta: v })));
+        .concat(voltas.filter((v) => v.st === si).map((v) => ({ kind: 'volta', x: v.x0 + 0.3 * s, volta: v })))
+        .concat(keyChanges.filter((k) => k.st === si).map((k) => ({ kind: 'key', x: k.x, key: k })));
       items.sort((a, b) => a.x - b.x || (a.kind === 'repeat' && a.rep.kind === 'end' ? -1 : 0));
       let measureAcc = {};
       let barIdx = 0;
       for (const it of items) {
         while (barIdx < myBars.length && myBars[barIdx] < it.x) { barIdx++; measureAcc = {}; }
+        if (it.kind === 'key') {
+          fifths = it.key.fifths; measureAcc = {};
+          if (it.key.courtesy) continue;
+          const [sx, sy] = toSource(T, it.x, lineAt(st, 2, it.x));
+          events.push({ type: 'key', fifths, staff: si, measure: barIdx, dur: 0, x: sx, y: sy, box: boxOf(T, ...it.key.box) });
+          continue;
+        }
         if (it.kind === 'repeat') {
           const [sx, sy] = toSource(T, it.x, lineAt(st, 2, it.x));
           events.push({ type: 'repeat', kind: it.rep.kind, staff: si, measure: barIdx, dur: 0, x: sx, y: sy, box: boxOf(T, ...it.rep.box) });
@@ -1238,6 +1353,7 @@
           _h: it.heads, _x: it.x, _y: it.heads[0].cy,
         });
       }
+      carryKey = fifths;
     });
     // ---- triolets : chiffre 3 près d'un groupe de trois notes/silences
     let tupId = 0;
@@ -1245,7 +1361,7 @@
     // un chiffre entouré d'autres caractères alignés appartient à un texte (titre, paroles…)
     const textLike = (C) => comps.filter((D) => D !== C && !D.isHead && D.cls !== 'speck' && D.w < 1.5 * C.h && D.area / (D.w * D.h) > 0.2 && Math.abs(D.cy - C.cy) < 0.35 * C.h && Math.abs(D.h - C.h) < 0.6 * C.h &&
       Math.max(D.x0 - C.x1, C.x0 - D.x1) < 1.2 * C.h).length >= 2;
-    const tupDigits = comps.filter((C) => C.cls === 'tuplet3' && C.conf >= 0.6 && Math.abs(C.rel) < 7.5 && C.cx > staffInfo[C.staff].headerEnd && !inVolta(C) && !textLike(C)).concat(mergedTup);
+    const tupDigits = comps.filter((C) => tupScore(C.votes) >= 0.6 && Math.abs(C.rel) < 7.5 && C.cx > staffInfo[C.staff].headerEnd && !inVolta(C) && !textLike(C) && !textComps.has(C.id)).concat(mergedTup);
     for (const D of tupDigits) {
       const evs = events.filter((e) => e.staff === D.staff && (e.type === 'note' || e.type === 'rest') && !e.tup);
       let best = -1, bd = 1e9;
@@ -1271,18 +1387,190 @@
       }
       e.n = n;
     });
-    // liaisons de prolongation : arc fin reliant deux notes consécutives de même hauteur
-    const arcs = comps.filter((C) => !C.isHead && !C.dead && C.cls === 'other' && C.w > 1.0 * s && C.h < 1.6 * s && C.h > 0.15 * s && C.area / C.w < 0.4 * s);
+    // ==== signes d'expression ====
+    progress(0.94, 'Nuances et articulations');
+    const headEv = new Map(); events.forEach((e) => { if (e._h) e._h.forEach((hd) => headEv.set(hd, e)); });
+    const addArt = (e, k) => { e.artic = e.artic || []; if (!e.artic.includes(k)) e.artic.push(k); };
+    const nearestHead = (si, cx, cy, maxDx, maxDy, minDy) => {
+      let best = null, bd = 1e9;
+      for (const hd of heads) {
+        if (hd.st !== si || !headEv.has(hd)) continue;
+        const dx = Math.abs(hd.cx - cx), dy = Math.abs(hd.cy - cy);
+        if (dx > maxDx || dy > maxDy || dy < (minDy || 0)) continue;
+        const sc = dx + 0.12 * dy; if (sc < bd) { bd = sc; best = hd; }
+      }
+      return best;
+    };
+    const exprUsed = new Set();
+    // articulations et points d'orgue
+    const ART = { accent: 'accent', tenuto: 'tenuto', marcato: 'marcato', stacciss: 'staccatissimo', fermata: 'fermata' };
+    const fermatas = [];
+    if (model) for (const C of comps) {
+      const kind = ART[C.cls];
+      if (!kind || C.dead || C.isHead || textComps.has(C.id) || C.conf < 0.55 || C.w > 2.6 * s || C.h > 2 * s) continue;
+      const hd = nearestHead(C.staff, C.cx, C.cy, kind === 'fermata' ? 1.5 * s : 1.0 * s, kind === 'fermata' ? 10 * s : 8 * s, 0.55 * s);
+      if (!hd) continue;
+      const e = headEv.get(hd);
+      if (kind === 'fermata') { e.fermata = true; fermatas.push(C); } else addArt(e, kind);
+      exprUsed.add(C.id);
+    }
+    for (const [D, hd] of staccDots) {
+      if (fermatas.some((F) => Math.abs(F.cx - D.cx) < 1.0 * s && D.cy > F.y0 - 0.4 * s && D.cy < F.y1 + 0.7 * s)) continue;
+      const e = headEv.get(hd); if (!e) continue;
+      addArt(e, 'staccato'); exprUsed.add(D.id); D.staccOf = e;
+    }
+    // respirations : marque au-dessus de la portée, appliquée à la note qui précède
+    const noteList = events.filter((e) => e.type === 'note');
+    if (model) for (const C of comps) {
+      if (C.cls !== 'breath' || C.conf < 0.7 || C.dead || C.isHead || textComps.has(C.id)) continue;
+      if (C.h < 0.45 * s || C.h > 1.9 * s || C.w > 1.5 * s) continue;
+      const st = staves[C.staff]; if (C.y1 > lineAt(st, 0, C.cx) + 0.4 * st.sp) continue;
+      let prev = null;
+      for (const e of noteList) { if (e.staff === C.staff && e._x < C.cx - 0.2 * s) prev = e; }
+      if (!prev) { const before = noteList.filter((e) => e.staff < C.staff); prev = before[before.length - 1]; }
+      if (prev) { prev.breathAfter = true; exprUsed.add(C.id); }
+    }
+    // nuances : lettres p, m, f, s, z… regroupées en mots
+    const DYN_OK = new Set(['ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'sf', 'sfz', 'fz', 'fp', 'sfp', 'rf', 'rfz', 'sffz', 'pppp', 'ffff']);
+    const dynMarks = [];
+    if (model) {
+      const outStaff = (C) => { const st = staves[C.staff]; return C.y0 > lineAt(st, 4, C.cx) - 0.3 * st.sp || C.y1 < lineAt(st, 0, C.cx) + 0.3 * st.sp; };
+      const dl = comps.filter((C) => /^dyn_/.test(C.cls) && C.conf >= 0.5 && !C.dead && !C.isHead && !textComps.has(C.id) && outStaff(C) && C.h < 3.4 * s).sort((a, b) => a.x0 - b.x0);
+      const groups = [];
+      for (const C of dl) {
+        const g = groups.find((G) => { const L = G[G.length - 1]; return L.staff === C.staff && C.x0 - L.x1 < 0.6 * s && Math.min(L.y1, C.y1) - Math.max(L.y0, C.y0) > 0.3 * Math.min(L.h, C.h); });
+        if (g) g.push(C); else groups.push([C]);
+      }
+      for (const G of groups) {
+        const word = G.map((C) => C.cls.slice(4)).join('');
+        if (!DYN_OK.has(word)) continue;
+        const x0 = G[0].x0, x1 = G[G.length - 1].x1, si = G[0].staff;
+        const mine = noteList.filter((e) => e.staff === si);
+        const gcx = (x0 + x1) / 2;
+        let tgt = mine.filter((e) => e._x >= x0 - 0.5 * s && e._x <= x1 + 2 * s).sort((a, b) => Math.abs(a._x - gcx) - Math.abs(b._x - gcx))[0];
+        if (!tgt) tgt = mine.filter((e) => e._x >= x0 - 0.5 * s).sort((a, b) => a._x - b._x)[0];
+        if (!tgt || tgt._x - x1 > 6 * s) tgt = mine.sort((a, b) => Math.abs(a._x - gcx) - Math.abs(b._x - gcx))[0];
+        if (!tgt) continue;
+        if (!tgt.dyn) tgt.dyn = word;
+        G.forEach((C) => exprUsed.add(C.id));
+        dynMarks.push({ st: si, word, box: boxOf(T, x0, Math.min(...G.map((C) => C.y0)), x1, Math.max(...G.map((C) => C.y1))) });
+      }
+    }
+    // soufflets : sur une image où les traits effacés comme « lignes supplémentaires » hors portée sont restaurés
+    const hairpinIds = new Set();
+    const hpMask = new Uint8Array(w * h);
+    {
+      const nsL = ns.slice();
+      for (const st of staves) {
+        for (let x = Math.max(0, st.x0 - 2); x <= Math.min(w - 1, st.x1 + 2); x++) {
+          const top = st.ly[0][x] - t - 2, bot = st.ly[4][x] + t + 2;
+          for (let y = 0; y < h; y++) { if (y > top && y < bot) continue; const i = y * w + x; if (bin[i] && !ns[i]) nsL[i] = 1; }
+        }
+      }
+      const LL = labelComponents(nsL, w, h, true, 1);
+      const lab2 = LL.labels;
+      const isText = (C) => { // composante recouvrant du texte ou une nuance
+        for (let y = C.y0; y <= C.y1; y += 2) for (let x = C.x0; x <= C.x1; x += 2) { const l = labels[y * w + x]; if (l && (textComps.has(l) || exprUsed.has(l))) return true; } return false;
+      };
+      const hasHead = (C) => heads.some((hd) => hd.cx > C.x0 && hd.cx < C.x1 && hd.cy > C.y0 && hd.cy < C.y1);
+      const mark = (C) => { for (let y = C.y0; y <= C.y1; y++) for (let x = C.x0; x <= C.x1; x++) if (lab2[y * w + x] === C.id) hpMask[y * w + x] = 1; };
+      const apply = (si, x0, x1, kind) => {
+        const mine = noteList.filter((e) => e.staff === si && e._x >= x0 - 1.0 * s && e._x <= x1 + 0.6 * s).sort((a, b) => a._x - b._x);
+        if (!mine.length) return;
+        if (!mine[0].hairpin) mine[0].hairpin = kind; mine[mine.length - 1].hairpinEnd = true;
+      };
+      const outsideStaff = (C, si) => { const st = staves[si]; return !(C.y1 > lineAt(st, 0, C.cx) - 0.2 * st.sp && C.y0 < lineAt(st, 4, C.cx) + 0.2 * st.sp); };
+      const cands = LL.comps.filter((C) => C.w >= 1.0 * s && C.h <= 2.8 * s && C.area / C.w < 0.8 * s);
+      const segs = [];
+      for (const C of cands) {
+        const si = staffOf(C.cx, C.cy); if (si < 0 || !outsideStaff(C, si) || hasHead(C) || isText(C)) continue;
+        const kind = hairpinOf(C, lab2, w, s);
+        if (kind) { mark(C); apply(si, C.x0, C.x1, kind); continue; }
+        const L = straightLine(C, lab2, w, s); if (L) { L.st = si; segs.push(L); }
+      }
+      segs.sort((a, b) => a.x0 - b.x0);
+      const lines = [];
+      for (const L of segs) {
+        const M = lines.find((q) => q.st === L.st && L.x0 - q.x1 < 1.5 * s && L.x0 - q.x1 > -0.5 * s && Math.abs(q.a + q.b * L.x0 - (L.a + L.b * L.x0)) < 0.25 * s && Math.abs(q.b - L.b) < 0.06);
+        if (M) { const n0 = M.x1 - M.x0, n1 = L.x1 - L.x0; M.b = (M.b * n0 + L.b * n1) / (n0 + n1); M.a = (M.a * n0 + L.a * n1) / (n0 + n1); M.x1 = Math.max(M.x1, L.x1); M.comps.push(...L.comps); }
+        else lines.push(Object.assign({}, L, { comps: L.comps.slice() }));
+      }
+      const usedL = new Set();
+      for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
+        const A = lines[i], B = lines[j];
+        if (usedL.has(A) || usedL.has(B) || A.st !== B.st) continue;
+        const xl = Math.max(A.x0, B.x0), xr = Math.min(A.x1, B.x1);
+        if (xr - xl < 2 * s || xr - xl < 0.7 * Math.min(A.x1 - A.x0, B.x1 - B.x0)) continue;
+        const dl = Math.abs((A.a + A.b * xl) - (B.a + B.b * xl)), dr = Math.abs((A.a + A.b * xr) - (B.a + B.b * xr));
+        if (Math.max(dl, dr) > 2.2 * s) continue;
+        let kind = null;
+        if (dl < 0.5 * s && dr > dl + 0.35 * s) kind = 'cres'; else if (dr < 0.5 * s && dl > dr + 0.35 * s) kind = 'dim';
+        if (!kind) continue;
+        usedL.add(A); usedL.add(B);
+        [...A.comps, ...B.comps].forEach(mark);
+        apply(A.st, Math.min(A.x0, B.x0), Math.max(A.x1, B.x1), kind);
+      }
+      for (const C of comps) { if (C.dead) continue; const i = Math.round(C.cy) * w + Math.round(C.cx); if (hpMask[i]) hairpinIds.add(C.id); }
+    }
+    // liaisons : arcs fins
+    const skip = new Uint8Array(comps.length + 1);
+    for (const C of comps) {
+      if (textComps.has(C.id) || hairpinIds.has(C.id) || exprUsed.has(C.id)) skip[C.id] = 1;
+      else if (/^(clef|sharp|flat|natural|dsharp|dflat|rest|t\d|time|tuplet3|dyn_|accent|marcato|fermata|breath)/.test(C.cls) && C.conf >= 0.7) skip[C.id] = 1;
+    }
+    const curves = findCurves(ns, w, h, s, labels, skip, heads, hpMask);
+    const curveOut = [];
+    for (const K of curves) {
+      const si = staffOf((K.x0 + K.x1) / 2, K.cy); const st = staves[si];
+      if (!st || K.cy < lineAt(st, 0, K.x0) - 9 * st.sp || K.cy > lineAt(st, 4, K.x0) + 9 * st.sp) continue;
+      const mine = noteList.filter((e) => e.staff === si && e._x >= K.x0 - 0.75 * s && e._x <= K.x1 + 0.4 * s).sort((a, b) => a._x - b._x);
+      const vert = mine.filter((e) => e._h.some((hd) => Math.abs(hd.cy - K.cy) < 7 * s));
+      if (!vert.length) continue;
+      const lastOfStaff = noteList.filter((e) => e.staff === si).slice(-1)[0];
+      const openEnd = lastOfStaff && vert[vert.length - 1] === lastOfStaff && K.x1 > lastOfStaff._x + 1.5 * s;
+      if (vert.length === 2 && !openEnd) {
+        const [A, B] = vert;
+        const same = A.pitches.length === B.pitches.length && A.pitches.every((p, k) => p.midi === B.pitches[k].midi);
+        const iA = events.indexOf(A), iB = events.indexOf(B);
+        const between = events.slice(iA + 1, iB).some((e) => e.type === 'note' || e.type === 'rest');
+        if (same && !between) { B.tie = true; curveOut.push({ kind: 'tie', box: boxOf(T, K.x0, K.y0, K.x1, K.y1) }); continue; }
+      }
+      // point d'orgue en deux morceaux (arc + point)
+      if (K.above && K.x1 - K.x0 < 3.2 * s) {
+        const D = dots.find((q) => Math.abs(q.cx - (K.x0 + K.x1) / 2) < 0.3 * (K.x1 - K.x0) && q.cy > K.y0 && q.cy < K.y1 + 0.8 * s);
+        if (D) {
+          const hd = nearestHead(si, D.cx, D.cy, 1.5 * s, 10 * s, 0.5 * s);
+          if (hd && hd.cy > D.cy) {
+            const e = headEv.get(hd); e.fermata = true;
+            if (D.staccOf && D.staccOf.artic) { D.staccOf.artic = D.staccOf.artic.filter((a) => a !== 'staccato'); if (!D.staccOf.artic.length) delete D.staccOf.artic; }
+            continue;
+          }
+        }
+      }
+      if (vert.length < 2 && !openEnd) continue;
+      vert[0].slurStart = true; vert[vert.length - 1].slurEnd = !openEnd;
+      vert.forEach((e, k) => { if (k < vert.length - 1 || openEnd) e.legato = true; });
+      curveOut.push({ kind: 'slur', box: boxOf(T, K.x0, K.y0, K.x1, K.y1) });
+    }
+    // ancien repli pour les liaisons de prolongation courtes non reconstituées
+    const arcs = comps.filter((C) => !C.isHead && !C.dead && (C.cls === 'other' || C.cls === 'curve') && C.w > 1.0 * s && C.h < 1.6 * s && C.h > 0.15 * s && C.area / C.w < 0.4 * s && !textComps.has(C.id) && !hairpinIds.has(C.id));
     const noteEvs = events.filter((e) => e.type === 'note' || e.type === 'rest');
     for (let i = 1; i < noteEvs.length; i++) {
       const A = noteEvs[i - 1], B = noteEvs[i];
-      if (A.type !== 'note' || B.type !== 'note' || A.staff !== B.staff) continue;
+      if (A.type !== 'note' || B.type !== 'note' || A.staff !== B.staff || B.tie) continue;
       if (A.pitches.length !== B.pitches.length || A.pitches.some((p, k) => p.midi !== B.pitches[k].midi)) continue;
       const ha = A._h[0], hb = B._h[0];
       const hit = arcs.some((C) => C.staff === A.staff && C.x0 > ha.cx - 0.3 * s && C.x1 < hb.cx + 1.0 * s && C.x0 < hb.cx && (C.x1 - C.x0) > 0.45 * (hb.cx - ha.cx) &&
         Math.min(Math.abs(C.cy - ha.cy), Math.abs(C.cy - hb.cy)) < 1.8 * s);
-      if (hit) B.tie = true;
+      if (hit) { B.tie = true; if (A.legato && A.slurStart && B.slurEnd) { delete A.legato; delete A.slurStart; delete B.slurEnd; } }
     }
+    // blocs de texte à lire par OCR (titre, tempo, indications)
+    const textBlocks = textLines.map((L) => {
+      const st = staves[L.staff];
+      const where = L.y1 < lineAt(st, 0, (L.x0 + L.x1) / 2) ? 'above' : 'below';
+      const firstAbove = L.staff === 0 && where === 'above';
+      return { staff: L.staff, where, top: firstAbove, h: L.mh / s, box: boxOf(T, L.x0, L.y0, L.x1, L.y1), x: toSource(T, L.x0, L.y0)[0], _x0: L.x0 };
+    });
     events.forEach((e) => { delete e._h; delete e._x; delete e._y; });
     // mesure entière (pause) -> durée de la mesure
     const measureLen = timeSig ? timeSig[0] * 4 / timeSig[1] : inferMeasureLen(events) || 4;
@@ -1293,17 +1581,227 @@
       transform: T,
       metrics: { s, t, scale, angle, ms: Date.now() - t0 },
       staves: staves.map((st, i) => ({
-        index: i, clef: staffInfo[i].clef, fifths: staffInfo[i].fifths || globalKey,
+        index: i, clef: staffInfo[i].clef, fifths: staffInfo[i].fifthsUsed != null ? staffInfo[i].fifthsUsed : (staffInfo[i].fifths || globalKey),
         lines: [0, 1, 2, 3, 4].map((li) => [toSource(T, st.x0, st.ly[li][st.x0]), toSource(T, st.x1, st.ly[li][st.x1])]),
         polygon: [toSource(T, st.x0, st.ly[0][st.x0] - st.sp), toSource(T, st.x1, st.ly[0][st.x1] - st.sp), toSource(T, st.x1, st.ly[4][st.x1] + st.sp), toSource(T, st.x0, st.ly[4][st.x0] + st.sp)],
         bars: bars.filter((b) => b.st === i).map((b) => toSource(T, b.x, st.ly[2][Math.round(b.x)])),
+        // géométrie des 5 lignes (points échantillonnés, coordonnées de la photo) pour placer un ajout manuel
+        geom: [0, 1, 2, 3, 4].map((li) => Array.from({ length: 25 }, (_, k) => { const x = Math.round(st.x0 + (st.x1 - st.x0) * k / 24); return toSource(T, x, st.ly[li][x]).map((v) => Math.round(v * 10) / 10); })),
       })),
       key: globalKey,
       time: timeSig,
       measureLen,
       events,
-      _debug: opts.debug ? { w, h, bin, ns, staves, heads, comps, labels, staffInfo, bars, rests, repeats, voltas, P } : undefined,
+      textBlocks,
+      marks: { dyn: dynMarks, curves: curveOut },
+      _debug: opts.debug ? { w, h, bin, ns, staves, heads, comps, labels, staffInfo, bars, rests, repeats, voltas, P, textLines, curves, keyChanges } : undefined,
     };
+  }
+  // Soufflet (crescendo / diminuendo) : deux traits fins qui divergent depuis une pointe
+  function hairpinOf(C, labels, w, s) {
+    if (C.w < 2.2 * s || C.h < 0.3 * s || C.h > 2.6 * s || C.area / C.w > 0.75 * s) return null;
+    const N = C.w; let two = 0; const spread = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const x = C.x0 + i; let runs = 0, inR = false, fy = -1, ly = -1;
+      for (let y = C.y0; y <= C.y1; y++) {
+        const b = labels[y * w + x] === C.id;
+        if (b) { if (!inR) { runs++; inR = true; } if (fy < 0) fy = y; ly = y; } else inR = false;
+      }
+      if (runs === 2) two++;
+      spread[i] = fy < 0 ? 0 : ly - fy + 1;
+      if (runs > 2) return null;
+    }
+    if (two < 0.45 * N) return null;
+    const k = Math.max(2, Math.round(0.06 * N));
+    let L = 0, R = 0; for (let i = 0; i < k; i++) { L += spread[i]; R += spread[N - 1 - i]; } L /= k; R /= k;
+    // évasement régulier : la largeur au milieu est intermédiaire
+    const M = spread[N >> 1];
+    if (R - L > 0.45 * s && L < 0.55 * s && M > L - 1 && M < R + 1) return 'cres';
+    if (L - R > 0.45 * s && R < 0.55 * s && M > R - 1 && M < L + 1) return 'dim';
+    return null;
+  }
+
+  // Trait fin rectiligne (branche de soufflet) : une seule plage fine par colonne, ajustement linéaire
+  function straightLine(C, labels, w, s) {
+    if (C.w < 1.0 * s || C.h > 1.8 * s || C.area / C.w > 0.4 * s) return null;
+    const xs = [], ys = [];
+    for (let x = C.x0; x <= C.x1; x++) {
+      let runs = 0, inR = false, sy = 0, n = 0;
+      for (let y = C.y0; y <= C.y1; y++) {
+        const b = labels[y * w + x] === C.id;
+        if (b) { if (!inR) { runs++; inR = true; } sy += y; n++; } else inR = false;
+      }
+      if (runs > 1 || n > 0.4 * s) return null;
+      if (n) { xs.push(x); ys.push(sy / n); }
+    }
+    if (xs.length < 0.8 * C.w) return null;
+    const c = polyfit(xs.map((x) => x - C.x0), ys, 1); if (!c) return null;
+    let rss = 0; xs.forEach((x, i) => { const e = ys[i] - (c[0] + c[1] * (x - C.x0)); rss += e * e; });
+    if (Math.sqrt(rss / xs.length) > 0.1 * s || Math.abs(c[1]) > 0.35) return null;
+    return { x0: C.x0, x1: C.x1, a: c[0] - c[1] * C.x0, b: c[1], comps: [C] };
+  }
+
+  // Arcs fins (liaisons d'expression et de prolongation) reconstitués à partir des fragments
+  function findCurves(ns, w, h, s, labels, skip, heads, hpMask) {
+    const maxV = Math.max(3, Math.round(0.55 * s));
+    const thin = new Uint8Array(w * h);
+    for (let x = 0; x < w; x++) {
+      let y = 0;
+      while (y < h) {
+        if (!ns[y * w + x]) { y++; continue; }
+        const st = y; while (y < h && ns[y * w + x]) y++;
+        if (y - st <= maxV) for (let q = st; q < y; q++) if (!skip[labels[q * w + x]] && !(hpMask && hpMask[q * w + x])) thin[q * w + x] = 1;
+      }
+    }
+    for (const hd of heads) {
+      const rx = hd.wpx / 2 + 0.12 * s, ry = hd.hpx / 2 + 0.12 * s;
+      for (let y = Math.round(hd.cy - ry); y <= Math.round(hd.cy + ry); y++) for (let x = Math.round(hd.cx - rx); x <= Math.round(hd.cx + rx); x++) {
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const u = (x - hd.cx) / rx, v = (y - hd.cy) / ry; if (u * u + v * v <= 1) thin[y * w + x] = 0;
+      }
+    }
+    const { labels: tl, comps: tc } = labelComponents(thin, w, h, true, 1);
+    const pieces = [];
+    for (const P of tc) {
+      if (P.w < 0.3 * s || P.area < 0.06 * s * s || P.w < 0.6 * P.h) continue;
+      const cols = new Float32Array(P.w).fill(NaN); let wide = 0;
+      for (let i = 0; i < P.w; i++) {
+        const x = P.x0 + i; let sy = 0, n = 0, fy = -1, ly = -1;
+        for (let y = P.y0; y <= P.y1; y++) if (tl[y * w + x] === P.id) { sy += y; n++; if (fy < 0) fy = y; ly = y; }
+        if (n) { cols[i] = sy / n; if (ly - fy > 0.55 * s) wide++; }
+      }
+      if (wide > 0.25 * P.w) continue;
+      const k = Math.max(2, Math.min(P.w >> 1, Math.round(0.5 * s)));
+      const avg = (a, b) => { let t = 0, n = 0; for (let i = a; i < b; i++) if (!isNaN(cols[i])) { t += cols[i]; n++; } return n ? t / n : NaN; };
+      const ly0 = avg(0, k), ly1 = avg(P.w - k, P.w);
+      const sl0 = (avg(k, 2 * k) - ly0) / k, sl1 = (ly1 - avg(P.w - 2 * k, P.w - k)) / k;
+      pieces.push({ P, cols, x0: P.x0, x1: P.x1, ly0, ly1, sl0: isNaN(sl0) ? 0 : sl0, sl1: isNaN(sl1) ? 0 : sl1, next: null, prev: null });
+    }
+    pieces.sort((a, b) => a.x0 - b.x0);
+    for (const A of pieces) {
+      let best = null, bs = 1e9;
+      for (const B of pieces) {
+        if (B === A || B.prev || B.x0 < A.x1 - 0.3 * s || B.x0 - A.x1 > 1.3 * s) continue;
+        const gap = Math.max(0, B.x0 - A.x1);
+        const pred = A.ly1 + A.sl1 * gap;
+        const err = Math.abs(pred - B.ly0);
+        if (err > 0.3 * s + 0.25 * gap) continue;
+        if (Math.abs(A.sl1 - B.sl0) > 0.9) continue;
+        const sc = err + 0.3 * gap;
+        if (sc < bs) { bs = sc; best = B; }
+      }
+      if (best) { A.next = best; best.prev = A; }
+    }
+    const curves = [];
+    for (const A of pieces) {
+      if (A.prev) continue;
+      const chain = []; for (let p = A; p && chain.length < 40; p = p.next) chain.push(p);
+      const xs = [], ys = [];
+      chain.forEach((p) => p.cols.forEach((y, i) => { if (!isNaN(y)) { xs.push(p.x0 + i); ys.push(y); } }));
+      if (xs.length < 4) continue;
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), span = x1 - x0;
+      if (span < 1.1 * s) continue;
+      const y0 = ys[xs.indexOf(x0)], y1 = ys[xs.indexOf(x1)];
+      // flèche par rapport à la corde
+      let sag = 0, pos = 0, neg = 0;
+      for (let i = 0; i < xs.length; i++) {
+        const cy = y0 + (y1 - y0) * (xs[i] - x0) / span; const d = ys[i] - cy;
+        if (Math.abs(d) > Math.abs(sag)) sag = d;
+        if (d > 0.05 * s) pos++; else if (d < -0.05 * s) neg++;
+      }
+      if (Math.abs(sag) < Math.max(0.22 * s, 0.035 * span)) continue;
+      const maj = Math.max(pos, neg); if (maj < 0.7 * (pos + neg) || maj < 0.4 * xs.length) continue;
+      // régularité : pas de zigzag (ajustement quadratique)
+      const u = xs.map((x) => (x - x0) / span);
+      const c = polyfit(u, ys, 2);
+      if (!c) continue;
+      let rss = 0; for (let i = 0; i < xs.length; i++) { const e = ys[i] - (c[0] + c[1] * u[i] + c[2] * u[i] * u[i]); rss += e * e; }
+      const rms = Math.sqrt(rss / xs.length);
+      if (rms > 0.2 * s + 0.02 * span) continue;
+      curves.push({ x0, x1, y0: Math.min(...ys), y1: Math.max(...ys), ya: y0, yb: y1, above: sag < 0, cy: ys.reduce((a, b) => a + b, 0) / ys.length, pieces: chain.map((p) => p.P.id) });
+    }
+    return curves;
+  }
+
+  // Lignes de texte : suites de composantes de taille « lettre » alignées horizontalement, hors des lignes de la portée
+  function findTextLines(comps, staves, s, headComps) {
+    const outside = (C) => {
+      const st = staves[C.staff]; if (!st) return true;
+      const top = lineAt(st, 0, C.cx), bot = lineAt(st, 4, C.cx);
+      return C.y1 < top + 0.45 * s || C.y0 > bot - 0.45 * s || C.cx < st.x0 - s || C.cx > st.x1 + s;
+    };
+    const cand = comps.filter((C) => !C.dead && C.cls !== 'speck' && C.h >= 0.3 * s && C.h <= 4.2 * s && (C.w <= 6 * s || (C.w <= 12 * s && C.h >= 0.5 * s && C.area / (C.w * C.h) >= 0.25)) && C.area >= 0.03 * s * s && outside(C) && !(headComps && headComps.has(C.id) && C.h > 2.0 * s));
+    cand.sort((a, b) => a.x0 - b.x0);
+    const par = new Map(cand.map((C) => [C, C]));
+    const find = (a) => { while (par.get(a) !== a) { par.set(a, par.get(par.get(a))); a = par.get(a); } return a; };
+    const vov = (A, B) => Math.min(A.y1, B.y1) - Math.max(A.y0, B.y0);
+    for (let i = 0; i < cand.length; i++) {
+      const A = cand[i];
+      for (let j = i + 1; j < cand.length; j++) {
+        const B = cand[j];
+        if (B.x0 > A.x1 + 1.6 * s) break;
+        const gap = B.x0 - A.x1, mh = Math.max(A.h, B.h), nh = Math.min(A.h, B.h);
+        if (gap > 0.75 * mh || gap < -0.5 * nh) continue;
+        if (mh / nh > 3.2 || vov(A, B) < 0.45 * nh) continue;
+        par.set(find(A), find(B));
+      }
+    }
+    const groups = new Map();
+    for (const C of cand) { const r = find(C); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(C); }
+    // mots -> lignes : mots voisins sur la même ligne de base (lettres italiques souvent soudées)
+    let words = [...groups.values()].map((g) => ({ g, x0: Math.min(...g.map((C) => C.x0)), x1: Math.max(...g.map((C) => C.x1)), y0: Math.min(...g.map((C) => C.y0)), y1: Math.max(...g.map((C) => C.y1)), mh: g.map((C) => C.h).sort((a, b) => a - b)[g.length >> 1] }));
+    words = words.filter((W) => W.y1 - W.y0 <= 4.5 * s).sort((a, b) => a.x0 - b.x0);
+    const wl = [];
+    for (const W of words) {
+      const L = wl.find((q) => W.x0 - q.x1 < 2.4 * Math.max(q.mh, W.mh) && W.x0 - q.x1 > -0.3 * s && Math.min(q.y1, W.y1) - Math.max(q.y0, W.y0) > 0.5 * Math.min(q.y1 - q.y0, W.y1 - W.y0) && Math.max(q.mh, W.mh) / Math.min(q.mh, W.mh) < 2.5);
+      if (L) { L.g.push(...W.g); L.nw++; L.x1 = Math.max(L.x1, W.x1); L.y0 = Math.min(L.y0, W.y0); L.y1 = Math.max(L.y1, W.y1); L.mh = Math.max(L.mh, W.mh); }
+      else wl.push(Object.assign({}, W, { g: W.g.slice(), nw: 1 }));
+    }
+    const lines = [];
+    for (const W of wl) {
+      const g = W.g;
+      const width = W.x1 - W.x0;
+      const hs = g.map((C) => C.h).sort((a, b) => a - b), mh = hs[hs.length >> 1];
+      const far = Math.abs(g[0].rel) > 6;
+      if (mh > (far ? 3.8 : 2.2) * s || mh < 0.5 * s || hs[hs.length - 1] < 0.6 * s) continue;
+      // lettres : composantes compactes (pas des crochets de triolet ni des traits)
+      const SYM = /^(accent|marcato|fermata|breath|stacciss|tenuto|dot|sharp|flat|natural|rest|clef|tuplet3|curve|hairpin)/;
+      const nl = g.filter((C) => C.w <= 2.2 * C.h && C.area / (C.w * C.h) > 0.12 && !(SYM.test(C.cls) && C.conf >= 0.8) && !(C.votes && (C.votes.tuplet3 || 0) > 0.5)).length;
+      // alignement sur une ligne de base (des têtes de notes successives montent et descendent)
+      const ys1 = g.map((C) => C.y1).sort((a, b) => a - b), my1 = ys1[ys1.length >> 1];
+      const ys0 = g.map((C) => C.y0).sort((a, b) => a - b), my0 = ys0[ys0.length >> 1];
+      const aligned = g.filter((C) => Math.abs(C.y1 - my1) <= 0.2 * mh + 1 || Math.abs(C.y0 - my0) <= 0.2 * mh + 1).length;
+      if (g.length >= 3 && aligned < 0.6 * g.length) continue;
+      const hosts = g.filter((C) => headComps && headComps.has(C.id)).length;
+      const st0 = staves[g[0].staff];
+      const nearStaff = st0 && W.y0 < lineAt(st0, 4, (W.x0 + W.x1) / 2) + 4.5 * st0.sp && W.y1 > lineAt(st0, 0, (W.x0 + W.x1) / 2) - 4.5 * st0.sp;
+      if (nearStaff && hosts >= 2 && hosts >= 0.4 * g.length) continue;
+      if (!(nl >= 3 || (nl === 2 && g.length === 2 && width >= 2.6 * mh) || (g.length === 1 && width >= 3.5 * mh && W.y1 - W.y0 < 1.6 * s && g[0].cls === 'text' && g[0].conf >= 0.7))) continue;
+      if (width < 1.4 * s) continue;
+      if (g.every((C) => /^dyn_/.test(C.cls) && C.conf >= 0.6)) continue; // nuances (sfz, f … p)
+      lines.push({ comps: g, x0: W.x0, x1: W.x1, y0: W.y0, y1: W.y1, mh });
+    }
+    // absorption des mots courts (« a », « de ») et des signes isolés alignés sur une ligne
+    for (const L of lines) {
+      for (const C of cand) {
+        if (L.comps.includes(C) || C.h > 1.6 * L.mh) continue;
+        if (C.x1 < L.x0 - 3 * L.mh || C.x0 > L.x1 + 3 * L.mh) continue;
+        if (Math.min(L.y1, C.y1) - Math.max(L.y0, C.y0) < 0.5 * C.h) continue;
+        if (/^dyn_/.test(C.cls) && C.conf >= 0.7) continue;
+        L.comps.push(C); L.x0 = Math.min(L.x0, C.x0); L.x1 = Math.max(L.x1, C.x1);
+      }
+    }
+    // fusion des lignes qui se chevauchent sur la même hauteur
+    lines.sort((a, b) => a.x0 - b.x0);
+    const out = [];
+    for (const L of lines) {
+      const M = out.find((q) => Math.min(q.y1, L.y1) - Math.max(q.y0, L.y0) > 0.4 * Math.min(q.y1 - q.y0, L.y1 - L.y0) && L.x0 < q.x1 + 4 * Math.max(q.mh, L.mh));
+      if (M) { M.comps.push(...L.comps); M.x0 = Math.min(M.x0, L.x0); M.x1 = Math.max(M.x1, L.x1); M.y0 = Math.min(M.y0, L.y0); M.y1 = Math.max(M.y1, L.y1); M.mh = Math.max(M.mh, L.mh); }
+      else out.push(L);
+    }
+    const textComps = new Set();
+    out.forEach((L) => { L.comps.forEach((C) => textComps.add(C.id)); L.staff = L.comps[0].staff; });
+    return { textComps, textLines: out };
   }
   function mergeFragments(comps, labels, ns, w, h, s, t, model) {
     const SYM = /^(sharp|flat|natural|dsharp|dflat|rest|clef|t\d|time)/;
@@ -1325,7 +1823,7 @@
           // fusion : B absorbe A
           for (let y = A.y0; y <= A.y1; y++) for (let x = A.x0; x <= A.x1; x++) if (labels[y * w + x] === A.id) labels[y * w + x] = B.id;
           B.sx += A.sx; B.sy += A.sy; B.area += A.area;
-          Object.assign(B, { x0: M.x0, y0: M.y0, x1: M.x1, y1: M.y1, w: M.w, h: M.h, cx: B.sx / B.area, cy: B.sy / B.area, cls: r.cls, conf: r.conf, kdist: r.dist, feat: f });
+          Object.assign(B, { x0: M.x0, y0: M.y0, x1: M.x1, y1: M.y1, w: M.w, h: M.h, cx: B.sx / B.area, cy: B.sy / B.area, cls: r.cls, conf: r.conf, kdist: r.dist, votes: r.votes, feat: f });
           A.dead = true; A.cls = 'speck';
           break;
         }
@@ -1404,6 +1902,6 @@
 
   return {
     analyze, loadModel, expandRepeats, rgbaToGray, warp, binarize, staffMetrics, estimateSkew, findStaves, removeStaffLines, labelComponents,
-    componentFeatures, knnClassify, boxBlur, distanceTransform, toSource, fromSource, noteName, diatonicToMidi, keyAlter, NOTE_NAMES_FR, CLEF_BOTTOM,
+    componentFeatures, featuresPred, knnClassify, boxBlur, distanceTransform, toSource, fromSource, noteName, diatonicToMidi, keyAlter, NOTE_NAMES_FR, CLEF_BOTTOM,
   };
 });

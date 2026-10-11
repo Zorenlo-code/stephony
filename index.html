@@ -57,7 +57,7 @@
         <li>Posez la partition bien à plat, sous une lumière franche, sans ombre.</li>
         <li>Cadrez une page entière ou quelques portées, le téléphone parallèle à la feuille.</li>
         <li>Partitions imprimées à une voix (clé de sol ou de fa) : c’est là que Stephony est le plus fiable.</li>
-        <li>Touchez une note pour la corriger si besoin : hauteur, durée, silence…</li>
+        <li>Touchez une note pour la corriger : hauteur, durée, nuance, articulation… Le bouton « Ajouter » place une note oubliée.</li>
       </ul>
     </details>
 
@@ -77,7 +77,8 @@
   <section id="score" class="view">
     <header class="topbar">
       <button id="backBtn" class="icon-btn" aria-label="Retour"><span class="ico" data-ico="back"></span></button>
-      <input id="titleInput" class="title-input" maxlength="80" aria-label="Titre">
+      <input id="titleInput" class="title-input" maxlength="80" aria-label="Titre de la partition">
+      <button id="renameBtn" class="icon-btn sm" aria-label="Renommer"><span class="ico" data-ico="pencil"></span></button>
       <button id="menuBtn" class="icon-btn" aria-label="Réglages"><span class="ico" data-ico="sliders"></span></button>
     </header>
 
@@ -85,6 +86,7 @@
       <span id="infoKey" class="pill"></span>
       <span id="infoNotes" class="pill"></span>
       <span class="spacer"></span>
+      <button id="addBtn" class="chip-btn add-btn" aria-label="Ajouter un élément"><span class="ico" data-ico="plus"></span>Ajouter</button>
       <button id="zoomOut" class="icon-btn sm" aria-label="Dézoomer"><span class="ico" data-ico="minus"></span></button>
       <button id="zoomIn" class="icon-btn sm" aria-label="Zoomer"><span class="ico" data-ico="plus"></span></button>
     </div>
@@ -94,6 +96,14 @@
         <img id="scoreImg" alt="Partition">
         <svg id="overlay" class="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
+    </div>
+
+    <div id="addBar" class="add-bar" hidden>
+      <div class="add-top"><b>Touchez la partition</b> à l’endroit voulu<button id="addClose" class="icon-btn sm" aria-label="Terminer"><span class="ico" data-ico="close"></span></button></div>
+      <div class="add-kinds" id="addKinds">
+        <button data-kind="note" class="on">Note</button><button data-kind="rest">Silence</button><button data-kind="key">Armure</button><button data-kind="text">Texte</button>
+      </div>
+      <div class="add-opts" id="addOpts"></div>
     </div>
 
     <div id="strip" class="strip" role="listbox" aria-label="Notes reconnues"></div>
@@ -107,28 +117,68 @@
         <button id="edListen" class="icon-btn" aria-label="Écouter"><span class="ico" data-ico="speaker"></span></button>
         <button id="edClose" class="icon-btn" aria-label="Fermer"><span class="ico" data-ico="close"></span></button>
       </div>
-      <div class="ed-row" id="edPitchRow">
-        <button class="ed-btn" data-act="oct-">Oct −</button>
-        <button class="ed-btn" data-act="semi-">−½ ton</button>
-        <button class="ed-btn" data-act="semi+">+½ ton</button>
-        <button class="ed-btn" data-act="oct+">Oct +</button>
+      <div class="ed-tabs" id="edTabs" role="tablist">
+        <button data-tab="note" class="on" role="tab">Note</button><button data-tab="jeu" role="tab">Jeu</button><button data-tab="struct" role="tab">Structure</button>
       </div>
-      <div class="ed-row durs" id="edDurRow"></div>
-      <div class="ed-row" id="edNoteRow">
-        <button class="ed-btn" data-act="toggleRest" id="edRestBtn">→ Silence</button>
-        <button class="ed-btn" data-act="tie" id="edTieBtn">Liaison</button>
-        <button class="ed-btn" data-act="insert">+ Après</button>
-        <button class="ed-btn danger" data-act="delete">Supprimer</button>
+      <div class="ed-pane" data-pane="note">
+        <div class="ed-row" id="edPitchRow">
+          <button class="ed-btn" data-act="oct-">Oct −</button>
+          <button class="ed-btn" data-act="semi-">−½ ton</button>
+          <button class="ed-btn" data-act="semi+">+½ ton</button>
+          <button class="ed-btn" data-act="oct+">Oct +</button>
+        </div>
+        <div class="ed-row durs" id="edDurRow"></div>
+        <div class="ed-row" id="edNoteRow">
+          <button class="ed-btn" data-act="toggleRest" id="edRestBtn">→ Silence</button>
+          <button class="ed-btn" data-act="tie" id="edTieBtn">Liaison</button>
+          <button class="ed-btn" data-act="insert">+ Après</button>
+          <button class="ed-btn danger" data-act="delete">Supprimer</button>
+        </div>
       </div>
-      <div class="ed-row" id="edStructRow">
-        <button class="ed-btn" data-act="tuplet" id="edTupBtn"><b class="tup-ico">3</b> Triolet</button>
-        <button class="ed-btn" data-act="repStart"><span class="rep-ico" data-rep="start"></span> Reprise</button>
-        <button class="ed-btn" data-act="repEnd">Fin <span class="rep-ico" data-rep="end"></span></button>
-        <button class="ed-btn" data-act="volta">1re/2e fin</button>
+      <div class="ed-pane" data-pane="jeu" hidden>
+        <div class="ed-label">Nuance</div>
+        <div class="ed-row dyns" id="edDynRow"></div>
+        <div class="ed-label">Articulation</div>
+        <div class="ed-row" id="edArtRow">
+          <button class="ed-btn" data-art="accent" aria-label="Accent"><span class="art-g">&gt;</span>Accent</button>
+          <button class="ed-btn" data-art="staccato" aria-label="Staccato"><span class="art-g">•</span>Staccato</button>
+          <button class="ed-btn" data-art="tenuto" aria-label="Tenuto"><span class="art-g">–</span>Tenuto</button>
+          <button class="ed-btn" data-art="marcato" aria-label="Marcato"><span class="art-g">^</span>Marcato</button>
+          <button class="ed-btn" data-art="staccatissimo" aria-label="Staccatissimo"><span class="art-g">▾</span>Piqué</button>
+          <button class="ed-btn" data-art="fermata" aria-label="Point d’orgue"><span class="art-g">𝄐</span>Orgue</button>
+          <button class="ed-btn" data-art="breath" aria-label="Respiration après la note"><span class="art-g">’</span>Respir.</button>
+          <button class="ed-btn" data-act="texts" aria-label="Texte d’expression"><span class="art-g"><i>T</i></span>Texte</button>
+        </div>
+        <div class="ed-label">Phrasé</div>
+        <div class="ed-row" id="edPhrRow">
+          <button class="ed-btn" data-act="legato">Lié ⁀</button>
+          <button class="ed-btn" data-act="cres">Cresc. &lt;</button>
+          <button class="ed-btn" data-act="dim">Dim. &gt;</button>
+          <button class="ed-btn" data-act="hpEnd">Fin du &lt;&gt;</button>
+        </div>
+      </div>
+      <div class="ed-pane" data-pane="struct" hidden>
+        <div class="ed-row" id="edStructRow">
+          <button class="ed-btn" data-act="tuplet" id="edTupBtn"><b class="tup-ico">3</b> Triolet</button>
+          <button class="ed-btn" data-act="repStart"><span class="rep-ico" data-rep="start"></span> Reprise</button>
+          <button class="ed-btn" data-act="repEnd">Fin <span class="rep-ico" data-rep="end"></span></button>
+          <button class="ed-btn" data-act="volta">1re/2e fin</button>
+        </div>
+        <div class="ed-row" id="edStruct2Row">
+          <button class="ed-btn" data-act="keyHere">Armure ici</button>
+          <button class="ed-btn" data-act="tempoHere">Tempo ici</button>
+          <button class="ed-btn" data-act="insertBefore">+ Avant</button>
+          <button class="ed-btn danger" data-act="delete">Supprimer</button>
+        </div>
       </div>
       <div class="ed-row" id="edMarkRow" hidden>
         <button class="ed-btn" data-act="markA" id="edMarkA"></button>
         <button class="ed-btn" data-act="markB" id="edMarkB"></button>
+        <button class="ed-btn" data-act="playFromMark">▶ D’ici</button>
+        <button class="ed-btn danger" data-act="delete">Supprimer</button>
+      </div>
+      <div class="ed-row key-row" id="edKeyRow" hidden>
+        <select id="edKeySel" aria-label="Nouvelle armure"></select>
         <button class="ed-btn" data-act="playFromMark">▶ D’ici</button>
         <button class="ed-btn danger" data-act="delete">Supprimer</button>
       </div>
@@ -140,7 +190,7 @@
         <button id="stopBtn" class="icon-btn" aria-label="Revenir au début"><span class="ico" data-ico="stop"></span></button>
         <button id="playBtn" class="play-btn" aria-label="Lecture"><span class="ico" data-ico="play"></span></button>
         <div class="tempo">
-          <div class="tempo-top"><span>Tempo</span><b id="tempoVal">90</b></div>
+          <div class="tempo-top"><span>Tempo <span id="tempoUnit">♩</span></span><b id="tempoVal">90</b></div>
           <input id="tempo" type="range" min="30" max="220" step="1" value="90" aria-label="Tempo">
         </div>
         <label class="instr">
@@ -173,6 +223,7 @@
       <label>Transposer</label>
       <div class="stepper"><button data-tr="-1">−</button><b id="trVal">0</b><button data-tr="1">+</button></div>
     </div>
+    <div class="field switch-field"><label for="exprChk">Interprétation<small>nuances, articulations, ralentis</small></label><input id="exprChk" type="checkbox" class="switch" checked></div>
     <div class="field switch-field"><label for="metroChk">Métronome</label><input id="metroChk" type="checkbox" class="switch"></div>
     <div class="field switch-field"><label for="repChk">Jouer les reprises</label><input id="repChk" type="checkbox" class="switch" checked></div>
     <div class="field switch-field"><label for="loopChk">Lecture en boucle</label><input id="loopChk" type="checkbox" class="switch"></div>
@@ -180,9 +231,48 @@
       <label for="midiSel">Sortie MIDI</label>
       <select id="midiSel"><option value="">Haut-parleur du téléphone</option></select>
     </div>
+    <div class="read-info" id="readInfo" hidden></div>
     <div class="sheet-actions">
+      <button id="renameBtn2" class="btn btn-glass"><span class="ico" data-ico="pencil"></span> Renommer</button>
       <button id="exportBtn" class="btn btn-primary"><span class="ico" data-ico="download"></span> Exporter en .mid</button>
       <button id="deleteBtn" class="btn btn-danger"><span class="ico" data-ico="trash"></span> Supprimer</button>
+    </div>
+  </div>
+
+  <!-- ============ RENOMMER ============ -->
+  <div id="renameSheet" class="sheet small-sheet" hidden>
+    <div class="sheet-grip"></div>
+    <h3>Renommer la partition</h3>
+    <input id="renameInput" class="text-field" maxlength="80" autocomplete="off" aria-label="Nouveau nom">
+    <div id="renameHint" class="hint" hidden></div>
+    <div class="sheet-actions two">
+      <button class="btn btn-glass" data-close>Annuler</button>
+      <button id="renameOk" class="btn btn-primary">Enregistrer</button>
+    </div>
+  </div>
+
+  <!-- ============ MENU D'UNE PARTITION (bibliothèque) ============ -->
+  <div id="libSheet" class="sheet small-sheet" hidden>
+    <div class="sheet-grip"></div>
+    <h3 id="libSheetTitle"></h3>
+    <div class="sheet-actions">
+      <button id="libOpen" class="btn btn-primary">Ouvrir</button>
+      <button id="libRename" class="btn btn-glass"><span class="ico" data-ico="pencil"></span> Renommer</button>
+      <button id="libDelete" class="btn btn-danger"><span class="ico" data-ico="trash"></span> Supprimer</button>
+    </div>
+  </div>
+
+  <!-- ============ TEXTE / TEMPO / ARMURE ============ -->
+  <div id="textSheet" class="sheet small-sheet" hidden>
+    <div class="sheet-grip"></div>
+    <h3 id="textSheetTitle">Indication</h3>
+    <div id="textList" class="text-list"></div>
+    <input id="textInput" class="text-field" maxlength="60" autocomplete="off" placeholder="ex. rit., a tempo, cresc., Allegro…" aria-label="Indication">
+    <div class="sugg" id="textSugg"></div>
+    <div class="hint" id="textHint"></div>
+    <div class="sheet-actions two">
+      <button class="btn btn-glass" data-close>Fermer</button>
+      <button id="textOk" class="btn btn-primary">Ajouter</button>
     </div>
   </div>
 
@@ -197,7 +287,9 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="js/omr.js"></script>
+  <script src="js/expr.js"></script>
   <script src="js/synth.js"></script>
+  <script src="js/ocr.js"></script>
   <script src="js/midi.js"></script>
   <script src="js/app.js"></script>
 </body>
