@@ -1,20 +1,13 @@
 # Stephony
 
-Photographiez une partition et écoutez-la en son MIDI. Tout se passe **sur le téléphone** : la reconnaissance de la partition, le synthétiseur et l’enregistrement de vos partitions. Pas de serveur, pas de compte, et l’app fonctionne hors connexion une fois installée.
+Photographiez une partition et écoutez-la en son MIDI. 
+Tout se passe **sur le téléphone** : la reconnaissance de la partition, le synthétiseur et l’enregistrement de vos partitions. Pas de serveur, pas de compte, et l’app fonctionne hors connexion une fois installée.
 
 ## Installer sur Android (une seule fois)
 
-Une PWA doit être ouverte **une fois** depuis une adresse `https://` pour pouvoir s’installer. GitHub Pages fournit cette adresse gratuitement : c’est un simple dépôt de fichiers, sans serveur à gérer.
-
-1. **Créez un compte** sur <https://github.com> (gratuit).
-2. **Nouveau dépôt** : bouton « New repository », nom `stephony`, visibilité **Public** (Pages est gratuit pour les dépôts publics), puis « Create repository ».
-3. **Envoyez les fichiers** : lien « uploading an existing file », puis glissez **le contenu** du dossier `stephony` (`index.html`, `sw.js`, `manifest.webmanifest` et les dossiers `css`, `js`, `icons`, `assets` et `vendor`). `index.html` doit se trouver à la racine du dépôt. Cliquez sur « Commit changes ».
-4. **Activez Pages** : Settings → Pages → Source « Deploy from a branch », branche `main`, dossier `/ (root)`, puis « Save ». Une à deux minutes plus tard, l’adresse s’affiche : `https://VOTRE-NOM.github.io/stephony/`.
-5. **Sur le téléphone**, ouvrez cette adresse dans **Chrome**, puis touchez le bouton « Installer » de l’app ou passez par le menu ⋮ → « Installer l’application ».
+**Sur le téléphone**, ouvrez cette adresse **https://zorenlo-code.github.io/stephony/** dans **Chrome**, puis touchez le bouton « Installer » de l’app ou passez par le menu ⋮ → « Installer l’application ».
 
 L’icône Stephony apparaît alors sur l’écran d’accueil. L’app s’ouvre en plein écran et fonctionne en mode avion.
-
-> Gardez le dépôt en ligne : il ne sert qu’à installer l’app et à recevoir les mises à jour. Vos partitions restent sur votre téléphone, jamais sur GitHub.
 
 ## Utilisation
 
@@ -62,10 +55,6 @@ Résultats mesurés sur des partitions de test générées (5 polices musicales)
 Sur l’étude n° 1 de Théo Charlier (*De l’articulation*), Stephony retrouve le titre, le tempo, le 6/8, les changements d’armure, les 17 nuances et les indications écrites.
 
 En cas d’erreur, quelques touches dans l’éditeur suffisent. Le bouton « Ajouter » place une note ou un signe oublié.
-
-## Mettre à jour l’app
-
-Remplacez les fichiers dans le dépôt GitHub, puis changez la ligne `const VERSION = 'stephony-v1.2.0'` de `sw.js` (par exemple `v1.2.1`). Les téléphones téléchargent la nouvelle version à la prochaine ouverture en ligne.
 
 ## Structure
 
