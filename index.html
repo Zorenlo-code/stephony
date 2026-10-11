@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#110d26">
+  <meta name="description" content="Stephony : photographiez une partition et écoutez-la en son MIDI, 100 % hors-ligne.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="icons/favicon-64.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <title>Stephony</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div class="bg-deco" aria-hidden="true">
+    <svg viewBox="0 0 400 300" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="decoGrad" x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0" stop-color="#7c3aed"/><stop offset=".55" stop-color="#d946ef"/><stop offset="1" stop-color="#f59e0b"/>
+        </linearGradient>
+      </defs>
+      <g fill="none" stroke="url(#decoGrad)" stroke-width="1.1">
+        <path d="M-20 190 C 90 150, 200 160, 420 70"/><path d="M-20 205 C 90 165, 200 175, 420 85"/>
+        <path d="M-20 220 C 90 180, 200 190, 420 100"/><path d="M-20 235 C 90 195, 200 205, 420 115"/>
+        <path d="M-20 250 C 90 210, 200 220, 420 130"/>
+      </g>
+    </svg>
+  </div>
+
+  <!-- ============ ACCUEIL ============ -->
+  <section id="home" class="view active">
+    <header class="brand">
+      <img src="icons/icon-192.png" alt="" class="brand-icon">
+      <div class="brand-text">
+        <h1>Stephony</h1>
+        <p>Photographiez une partition, écoutez-la.</p>
+      </div>
+      <button id="installBtn" class="chip-btn" hidden>Installer</button>
+    </header>
+
+    <div class="actions">
+      <label class="btn btn-primary btn-xl">
+        <input type="file" accept="image/*" capture="environment" id="camInput" hidden>
+        <span class="ico" data-ico="camera"></span>
+        <span>Prendre une photo</span>
+      </label>
+      <label class="btn btn-glass btn-xl">
+        <input type="file" accept="image/*" id="fileInput" hidden>
+        <span class="ico" data-ico="image"></span>
+        <span>Importer une image</span>
+      </label>
+    </div>
+
+    <details class="tips card">
+      <summary><span class="ico" data-ico="spark"></span> Conseils pour une bonne lecture</summary>
+      <ul>
+        <li>Posez la partition bien à plat, sous une lumière franche, sans ombre.</li>
+        <li>Cadrez une page entière ou quelques portées, le téléphone parallèle à la feuille.</li>
+        <li>Partitions imprimées à une voix (clé de sol ou de fa) : c’est là que Stephony est le plus fiable.</li>
+        <li>Touchez une note pour la corriger si besoin : hauteur, durée, silence…</li>
+      </ul>
+    </details>
+
+    <div class="section-head">
+      <h2>Mes partitions</h2>
+    </div>
+    <div class="demos">
+      <span>Essayer :</span>
+      <button class="demo-chip" data-demo="assets/demo.jpg" data-title="Au clair de la lune (exemple)">Au clair de la lune</button>
+      <button class="demo-chip" data-demo="assets/demo2.jpg" data-title="Petite valse en triolets (exemple)">Valse en triolets</button>
+    </div>
+    <div id="library" class="library"></div>
+    <p class="foot">Tout fonctionne sur votre téléphone, sans connexion ni serveur.</p>
+  </section>
+
+  <!-- ============ PARTITION ============ -->
+  <section id="score" class="view">
+    <header class="topbar">
+      <button id="backBtn" class="icon-btn" aria-label="Retour"><span class="ico" data-ico="back"></span></button>
+      <input id="titleInput" class="title-input" maxlength="80" aria-label="Titre">
+      <button id="menuBtn" class="icon-btn" aria-label="Réglages"><span class="ico" data-ico="sliders"></span></button>
+    </header>
+
+    <div class="info-row">
+      <span id="infoKey" class="pill"></span>
+      <span id="infoNotes" class="pill"></span>
+      <span class="spacer"></span>
+      <button id="zoomOut" class="icon-btn sm" aria-label="Dézoomer"><span class="ico" data-ico="minus"></span></button>
+      <button id="zoomIn" class="icon-btn sm" aria-label="Zoomer"><span class="ico" data-ico="plus"></span></button>
+    </div>
+
+    <div id="viewer" class="viewer">
+      <div id="stage" class="stage">
+        <img id="scoreImg" alt="Partition">
+        <svg id="overlay" class="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </div>
+
+    <div id="strip" class="strip" role="listbox" aria-label="Notes reconnues"></div>
+
+    <div id="editor" class="editor" hidden>
+      <div class="editor-head">
+        <div>
+          <div id="edName" class="ed-name">Sol3</div>
+          <div id="edSub" class="ed-sub">Noire · mesure 1</div>
+        </div>
+        <button id="edListen" class="icon-btn" aria-label="Écouter"><span class="ico" data-ico="speaker"></span></button>
+        <button id="edClose" class="icon-btn" aria-label="Fermer"><span class="ico" data-ico="close"></span></button>
+      </div>
+      <div class="ed-row" id="edPitchRow">
+        <button class="ed-btn" data-act="oct-">Oct −</button>
+        <button class="ed-btn" data-act="semi-">−½ ton</button>
+        <button class="ed-btn" data-act="semi+">+½ ton</button>
+        <button class="ed-btn" data-act="oct+">Oct +</button>
+      </div>
+      <div class="ed-row durs" id="edDurRow"></div>
+      <div class="ed-row" id="edNoteRow">
+        <button class="ed-btn" data-act="toggleRest" id="edRestBtn">→ Silence</button>
+        <button class="ed-btn" data-act="tie" id="edTieBtn">Liaison</button>
+        <button class="ed-btn" data-act="insert">+ Après</button>
+        <button class="ed-btn danger" data-act="delete">Supprimer</button>
+      </div>
+      <div class="ed-row" id="edStructRow">
+        <button class="ed-btn" data-act="tuplet" id="edTupBtn"><b class="tup-ico">3</b> Triolet</button>
+        <button class="ed-btn" data-act="repStart"><span class="rep-ico" data-rep="start"></span> Reprise</button>
+        <button class="ed-btn" data-act="repEnd">Fin <span class="rep-ico" data-rep="end"></span></button>
+        <button class="ed-btn" data-act="volta">1re/2e fin</button>
+      </div>
+      <div class="ed-row" id="edMarkRow" hidden>
+        <button class="ed-btn" data-act="markA" id="edMarkA"></button>
+        <button class="ed-btn" data-act="markB" id="edMarkB"></button>
+        <button class="ed-btn" data-act="playFromMark">▶ D’ici</button>
+        <button class="ed-btn danger" data-act="delete">Supprimer</button>
+      </div>
+    </div>
+
+    <footer class="player">
+      <div class="progress"><div id="progressBar"></div></div>
+      <div class="player-row">
+        <button id="stopBtn" class="icon-btn" aria-label="Revenir au début"><span class="ico" data-ico="stop"></span></button>
+        <button id="playBtn" class="play-btn" aria-label="Lecture"><span class="ico" data-ico="play"></span></button>
+        <div class="tempo">
+          <div class="tempo-top"><span>Tempo</span><b id="tempoVal">90</b></div>
+          <input id="tempo" type="range" min="30" max="220" step="1" value="90" aria-label="Tempo">
+        </div>
+        <label class="instr">
+          <span class="ico" data-ico="note"></span>
+          <select id="instrument" aria-label="Instrument"></select>
+        </label>
+      </div>
+    </footer>
+  </section>
+
+  <!-- ============ RÉGLAGES ============ -->
+  <div id="sheetBackdrop" class="backdrop" hidden></div>
+  <div id="menuSheet" class="sheet" hidden>
+    <div class="sheet-grip"></div>
+    <h3>Réglages de la partition</h3>
+    <div class="field">
+      <label for="clefSel">Clé</label>
+      <select id="clefSel">
+        <option value="">Détectée automatiquement</option>
+        <option value="G">Clé de sol</option>
+        <option value="F">Clé de fa</option>
+        <option value="C">Clé d’ut (3e ligne)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="keySel">Armure</label>
+      <select id="keySel"></select>
+    </div>
+    <div class="field">
+      <label>Transposer</label>
+      <div class="stepper"><button data-tr="-1">−</button><b id="trVal">0</b><button data-tr="1">+</button></div>
+    </div>
+    <div class="field switch-field"><label for="metroChk">Métronome</label><input id="metroChk" type="checkbox" class="switch"></div>
+    <div class="field switch-field"><label for="repChk">Jouer les reprises</label><input id="repChk" type="checkbox" class="switch" checked></div>
+    <div class="field switch-field"><label for="loopChk">Lecture en boucle</label><input id="loopChk" type="checkbox" class="switch"></div>
+    <div class="field" id="midiField" hidden>
+      <label for="midiSel">Sortie MIDI</label>
+      <select id="midiSel"><option value="">Haut-parleur du téléphone</option></select>
+    </div>
+    <div class="sheet-actions">
+      <button id="exportBtn" class="btn btn-primary"><span class="ico" data-ico="download"></span> Exporter en .mid</button>
+      <button id="deleteBtn" class="btn btn-danger"><span class="ico" data-ico="trash"></span> Supprimer</button>
+    </div>
+  </div>
+
+  <!-- ============ ANALYSE EN COURS ============ -->
+  <div id="busy" class="busy" hidden>
+    <div class="busy-card">
+      <div class="busy-ring"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="44" class="trk"/><circle id="busyArc" cx="50" cy="50" r="44" class="arc"/></svg><img src="icons/icon-192.png" alt=""></div>
+      <p id="busyMsg">Lecture de la partition…</p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/omr.js"></script>
+  <script src="js/synth.js"></script>
+  <script src="js/midi.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
